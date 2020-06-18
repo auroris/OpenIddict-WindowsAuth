@@ -15,4 +15,6 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 
 ## Installation and Configuration
 
-When working with it in Visual Studio, or publishing to IIS, you need to enable BOTH anonymous authentication and windows authentication. Because it's stateless whenever the application is unloaded or recycled any tokens issued will no longer be valid. If this matters to you, configure IIS to suspend rather than terminate for inactivity and alter app recycle periods to some value that makes sense to you.
+It was made in Visual Studio 2019, though if you're using a different environment all the important stuff is in Startup.cs. It's a .Net Core 3 Empty Web Application. Add the above NuGet packages and Startup.cs from this repository.
+
+When working with it or publishing to IIS, you need to enable BOTH anonymous authentication and windows authentication. As it is stateless whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure IIS to suspend rather than terminate the application during periods of inactivity and set the recycle period settings to mitigate this.
