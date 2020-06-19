@@ -112,8 +112,17 @@ namespace IdentityServer
 							// Attach email address if requested
 							if (context.Request.HasScope(Scopes.Email))
 							{
-								// Add the user's email address - make something up if it's not available due to being a machine account
-								identity.AddClaim(ClaimTypes.Email, user.EmailAddress != null ? user.EmailAddress : CreateMD5(user.DisplayName) + "@dev.localhost", Destinations.IdentityToken);
+								// Add the user's email address
+								if (user.EmailAddress != null)
+								{
+									identity.AddClaim(ClaimTypes.Email, user.EmailAddress, Destinations.IdentityToken);
+								}
+								else
+								{
+									// A common requirement for many apps using OpenID Connect is the user's email address. If the account is a machine account,
+									// like in dev, it won't be available, so just make something up
+									identity.AddClaim(ClaimTypes.Email, CreateMD5(user.DisplayName) + "@dev.localhost", Destinations.IdentityToken);
+								}
 							}
 
 							// Attach profile stuff if requested
@@ -123,11 +132,11 @@ namespace IdentityServer
 								identity.AddClaim(ClaimTypes.WindowsAccountName, result.Principal.FindFirstValue(ClaimTypes.Name), Destinations.IdentityToken);
 
 								// Add the user's name
-								identity.AddClaim(ClaimTypes.GivenName, user.GivenName, Destinations.IdentityToken);
-								identity.AddClaim(ClaimTypes.Surname, user.Surname, Destinations.IdentityToken);
+								if (user.GivenName != null) { identity.AddClaim(ClaimTypes.GivenName, user.GivenName, Destinations.IdentityToken); }
+								if (user.Surname != null) { identity.AddClaim(ClaimTypes.Surname, user.Surname, Destinations.IdentityToken); }
 
 								// Telephone #
-								identity.AddClaim(ClaimTypes.HomePhone, user.VoiceTelephoneNumber, Destinations.IdentityToken);
+								if (user.VoiceTelephoneNumber != null) { identity.AddClaim(ClaimTypes.HomePhone, user.VoiceTelephoneNumber, Destinations.IdentityToken); }
 							}
 
 							// Attach roles if requested
@@ -136,7 +145,7 @@ namespace IdentityServer
 								// Get and assign the group claims
 								foreach (Principal group in user.GetGroups())
 								{
-									// Respond with only groups that have the text "AURWEB" in them; I don't care about others
+									// Limit the groups returned to the smallest set possible; for me it's any AD group with the text "AURWEB" in its name
 									if (group.Name != null && group.Name.ToUpper().Contains("AURWEB"))
 									{
 										identity.AddClaim(ClaimTypes.Role, group.Name, Destinations.IdentityToken);
@@ -193,7 +202,7 @@ namespace IdentityServer
 		}
 
 		/// <summary>
-		/// Helper method to create an md5 has from a string
+		/// Helper method to create an md5 hash from a string
 		/// </summary>
 		/// <param name="input">a string</param>
 		/// <returns>hex-encoded md5 of string</returns>
