@@ -1,11 +1,11 @@
-# IdentityServer
-An OpenID Connect authorization server for Windows Authentication using the OpenIddict library.
+# OpenIddict-WindowsAuth
+An OpenID Connect authorization server for Windows Integrated Authentication using the OpenIddict library.
 
 ## Rationale
 
 Essentially a "copy and paste" OpenID Connect authorization server that doesn't need to maintain a database, certificates or any kind of permanent state. All it needs to do is perform Windows Authentication and pass the results to whomever called it.
 
-## NuGet Packages
+## NuGet Dependencies
 
 * Microsoft.AspNetCore.Authentication v2.2.0
 * OpenIddict.Server.AspNetCore v3.0.0-beta1.20311.67
