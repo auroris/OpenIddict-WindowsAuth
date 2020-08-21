@@ -1,17 +1,18 @@
-using System;
-using System.Collections.Generic;
-using System.DirectoryServices.AccountManagement;
-using System.Security.Claims;
-using System.Security.Principal;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using System;
+using System.DirectoryServices.AccountManagement;
+using System.Linq;
+using System.Security.Claims;
+using System.Security.Principal;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 
@@ -20,9 +21,14 @@ namespace IdentityServer
 	public class Startup
 	{
 		/// <summary>
-		/// List of hosts allowed to deal with this OpenIDConnect Server
+		/// Configuration comes from appsettings.json, environment variables, or the command line.
 		/// </summary>
-		public List<String> allowedHosts = new List<String> { "http://localhost", "https://www.auroris.net", "https://oidcdebugger.com" };
+		private readonly IConfiguration Configuration;
+
+		public Startup(IConfiguration configuration)
+		{
+			Configuration = configuration;
+		}
 
 		public void ConfigureServices(IServiceCollection services)
 		{
@@ -48,18 +54,16 @@ namespace IdentityServer
 					builder.UseInlineHandler(context =>
 					{
 						// Verification: I accept all context.ClientId's, but do check to see if the context.RedirectUri is proper
-						foreach (String str in allowedHosts)
+						// Partial matches, case insensitive
+						if (Configuration.GetSection("IdentityServer:Hosts").Get<string[]>().Any(s => context.RedirectUri.Contains(s, StringComparison.OrdinalIgnoreCase)))
 						{
-							if (context.RedirectUri.Contains(str, StringComparison.InvariantCultureIgnoreCase))
-							{
-								return default;
-							}
+							return default;
 						}
 
 						// Fall-through: URL was not proper.
 						context.Reject(
 							error: Errors.InvalidClient,
-							description: "The specified 'redirect_uri' is not valid for this client application.");
+							description: "The specified redirect_uri " + context.RedirectUri + " is not valid. Check the IdentityServer:Hosts key in appsettings.json for valid values.");
 						return default;
 					}));
 				
@@ -145,8 +149,8 @@ namespace IdentityServer
 								// Get and assign the group claims
 								foreach (Principal group in user.GetGroups())
 								{
-									// Limit the groups returned to the smallest set possible; for me it's any AD group with the text "AURWEB" in its name
-									if (group.Name != null && group.Name.ToUpper().Contains("AURWEB"))
+									// Limit the groups returned to the smallest set possible. Specify by name, exact match and case insensitive.
+									if (group.Name != null && Configuration.GetSection("IdentityServer:Groups").Get<string[]>().Contains(group.Name, StringComparer.OrdinalIgnoreCase))
 									{
 										identity.AddClaim(ClaimTypes.Role, group.Name, Destinations.IdentityToken);
 									}
@@ -185,7 +189,7 @@ namespace IdentityServer
 			// Configure CORS
 			app.UseCors(builder =>
 			{
-				builder.WithOrigins(allowedHosts.ToArray());
+				builder.WithOrigins(Configuration.GetSection("IdentityServer:Hosts").Get<string[]>());
 				builder.AllowAnyMethod();
 				builder.AllowAnyHeader();
 			});
