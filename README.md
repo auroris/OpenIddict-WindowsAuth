@@ -13,7 +13,7 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 * OpenIddict.Validation.ServerIntegration v3.0.0-beta1.20311.67
 * System.DirectoryServices.AccountManagement v4.7.0
 
-### Installation
+## Installation
 
 OpenIddict-WindowsAuth needs to be at the root of its IIS web site. The most common way to accomplish this without disturbing any existing web sites is to publish it on a subdomain or on a different port. You will also need to enable both anonymous authentication and windows authentication in IIS.
 
