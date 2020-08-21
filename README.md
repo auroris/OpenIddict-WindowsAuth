@@ -15,9 +15,9 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 
 ### Installation
 
-The OpenID server needs to be at the root of the IIS web site. The most common way to accomplish this without disturbing any existing web sites is to publish it on a subdomain or on a different port. You will also need to enable both anonymous authentication and windows authentication.
+OpenIddict-WindowsAuth needs to be at the root of its IIS web site. The most common way to accomplish this without disturbing any existing web sites is to publish it on a subdomain or on a different port. You will also need to enable both anonymous authentication and windows authentication in IIS.
 
-OpenIddict-WindowsAuth is stateless, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure the app pool to suspend rather than terminate during periods of inactivity and alter the recycle period settings to fire on a set schedule during periods of inactivity.
+OpenIddict-WindowsAuth is stateless, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure the app pool to suspend rather than terminate during periods of inactivity and alter the pool's recycle settings to fire on a set schedule during periods of inactivity.
 
 Windows Integrated Authentication requires IIS run on a domain joined computer or else you will only be able to authenticate with local computer accounts.
 
