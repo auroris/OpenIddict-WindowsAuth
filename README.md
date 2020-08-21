@@ -15,13 +15,15 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 
 ### Installation
 
-When publishing to IIS, you need to enable BOTH anonymous authentication and windows authentication. This application is stateless, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure IIS to suspend rather than terminate the application during periods of inactivity and set the recycle period settings to mitigate this.
+The OpenID server needs to be at the root of the IIS web site. The most common way to accomplish this without disturbing any existing web sites is to publish it on a subdomain or on a different port. You will also need to enable both anonymous authentication and windows authentication.
 
-This application relies on Windows Integrated Authentication and must run on a domain joined computer.
+OpenIddict-WindowsAuth is stateless, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure the app pool to suspend rather than terminate during periods of inactivity and alter the recycle period settings to fire on a set schedule during periods of inactivity.
+
+Windows Integrated Authentication requires IIS run on a domain joined computer or else you will only be able to authenticate with local computer accounts.
 
 ## Configuration
 
-Configuration for the application is stored in appsettings.json; and there are two keys you need to be aware of: IdentityServer:Hosts and IdentityServer:Groups
+Configuration for the application is primarily via appsettings.json, though environment variables and command line options are supported as well. There are two keys you need to be aware of: IdentityServer:Hosts and IdentityServer:Groups
 
 ### IdentityServer:Hosts
 
