@@ -25,6 +25,10 @@ Windows Integrated Authentication requires IIS run on a domain joined computer o
 
 Configuration for the application is primarily via appsettings.json, though environment variables and command line options are supported as well. There are two keys you need to be aware of: IdentityServer:Hosts and IdentityServer:Groups
 
+### IdentityServer:ServerUri
+
+The location URI IdentityServer should report in the Issuer and configuration fields of the `/.well-known/openid-configuration` document.
+
 ### IdentityServer:Hosts
 
 This key is a list of acceptable hosts attempting to authenticate against this application. We will not return authentication data for hosts not in this list. This list is also used to specify dotNet's cors setting. The expected format is a regular base URL without a trailing slash.

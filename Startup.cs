@@ -42,7 +42,8 @@ namespace IdentityServer
 				options.AddEphemeralEncryptionKey().AddEphemeralSigningKey();
 				options.AllowAuthorizationCodeFlow();
 				options.AllowImplicitFlow();
-				options.SetAuthorizationEndpointUris("/connect/authorize")
+				options.SetIssuer(new Uri(Configuration.GetSection("IdentityServer:ServerUri").Get<string>()))
+					   .SetAuthorizationEndpointUris("/connect/authorize")
 					   .SetTokenEndpointUris("/connect/token");
 				options.EnableDegradedMode(); // We'll handle protocol stuff ourselves; don't want user stores or such
 				options.UseAspNetCore()
