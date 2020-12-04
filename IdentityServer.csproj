@@ -11,7 +11,7 @@
     <PackageReference Include="OpenIddict.Server.AspNetCore" Version="3.0.0-beta1.20311.67" />
     <PackageReference Include="OpenIddict.Validation.AspNetCore" Version="3.0.0-beta1.20311.67" />
     <PackageReference Include="OpenIddict.Validation.ServerIntegration" Version="3.0.0-beta1.20311.67" />
-    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="4.7.0" />
+    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="5.0.0" />
   </ItemGroup>
 
 </Project>
