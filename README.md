@@ -11,7 +11,7 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 * OpenIddict.Server.AspNetCore v3.0.0-beta1.20311.67
 * OpenIddict.Validation.AspNetCore v3.0.0-beta1.20311.67
 * OpenIddict.Validation.ServerIntegration v3.0.0-beta1.20311.67
-* System.DirectoryServices.AccountManagement v4.7.0
+* System.DirectoryServices.AccountManagement v5.0.0
 
 ## Installation
 
