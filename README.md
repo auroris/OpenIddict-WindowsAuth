@@ -8,9 +8,9 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 ## NuGet Dependencies
 
 * Microsoft.AspNetCore.Authentication v2.2.0
-* OpenIddict.Server.AspNetCore v3.0.0-beta1.20311.67
-* OpenIddict.Validation.AspNetCore v3.0.0-beta1.20311.67
-* OpenIddict.Validation.ServerIntegration v3.0.0-beta1.20311.67
+* OpenIddict.Server.AspNetCore v3.0.0
+* OpenIddict.Validation.AspNetCore v3.0.0
+* OpenIddict.Validation.ServerIntegration v3.0.0
 * System.DirectoryServices.AccountManagement v5.0.0
 
 ## Installation
