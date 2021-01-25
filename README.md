@@ -41,4 +41,4 @@ This key is a list of acceptable active directory groups. Items are exact match,
 
 If you are running the project with default settings in Visual Studio, you can access http://localhost:5000/.well-known/openid-configuration to view OpenID configuration data.
 
-You can also run http://localhost:5000/connect/authorize?client_id=optional&redirect_uri=https://oidcdebugger.com/debug&scope=openid%20profile%20email%20roles&response_type=token&response_mode=form_post&nonce=f6pz1s2cfgs to test authentication.
+You can also run http://localhost:5000/connect/authorize?client_id=optional&redirect_uri=https://oidcdebugger.com/debug&scope=openid%20profile%20email%20roles&response_type=id_token&response_mode=form_post&nonce=f6pz1s2cfgs to test authentication.
