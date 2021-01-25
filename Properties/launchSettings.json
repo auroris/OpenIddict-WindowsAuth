@@ -11,7 +11,7 @@
     "IIS Express": {
       "commandName": "IISExpress",
       "launchBrowser": true,
-      "launchUrl": "http://localhost:5000/connect/authorize?client_id=nan&redirect_uri=https://oidcdebugger.com/debug&scope=openid profile email roles&response_type=code id_token token&response_mode=form_post&nonce=f6pz1s2cfgs",
+      "launchUrl": "http://localhost:5000/connect/authorize?client_id=nan&redirect_uri=https://oidcdebugger.com/debug&scope=openid%20profile%20email%20roles&response_type=token&response_mode=form_post&nonce=f6pz1s2cfgs",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
