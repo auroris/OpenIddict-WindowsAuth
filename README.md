@@ -5,21 +5,11 @@ An OpenID Connect authorization server for Windows Integrated Authentication usi
 
 Essentially a "copy and paste" OpenID Connect authorization server that doesn't need to maintain a database, certificates or any kind of permanent state. All it needs to do is perform Windows Authentication and pass the results to whomever called it.
 
-## NuGet Dependencies
-
-* Microsoft.AspNetCore.Authentication v2.2.0
-* OpenIddict.Server.AspNetCore v3.0.3
-* OpenIddict.Validation.AspNetCore v3.0.3
-* OpenIddict.Validation.ServerIntegration v3.0.3
-* System.DirectoryServices.AccountManagement v5.0.0
-
 ## Installation
-
-OpenIddict-WindowsAuth needs to be at the root of its IIS web site. The most common way to accomplish this without disturbing any existing web sites is to publish it on a subdomain or on a different port. You will also need to enable both anonymous authentication and windows authentication in IIS.
 
 OpenIddict-WindowsAuth doesn't have a database, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure the app pool to suspend rather than terminate during periods of inactivity and alter the pool's recycle settings to fire on a set schedule during periods of inactivity.
 
-Windows Integrated Authentication requires IIS run on a domain joined computer or else you will only be able to authenticate with local computer accounts.
+You must enable Windows Authentication and disable Anonymous Authentication in IIS.
 
 ## Configuration
 
@@ -27,7 +17,7 @@ Configuration for the application is primarily via appsettings.json, though envi
 
 ### IdentityServer:ServerUri
 
-The location URI IdentityServer should report in the Issuer and configuration fields of the `/.well-known/openid-configuration` document.
+The full URI IdentityServer should report in the Issuer and configuration fields of the `/.well-known/openid-configuration` document. If you install IdentityServer to "http(s)://myserver.com/IdentityServer/" that is what you should report in this field.
 
 ### IdentityServer:Hosts
 
@@ -35,7 +25,7 @@ This key is a list of acceptable hosts attempting to authenticate against this a
 
 ### IdentityServer:Groups
 
-This key is a list of acceptable active directory groups. Items are exact match, case insensitive. If the authenticating user is a member of an active directory group listed here, it will be returned in the roles field.
+This key is a list of acceptable active directory groups. Items are exact match, case insensitive. If the authenticating user is a member of an active directory group listed here, it will be returned as a role claim.
 
 ## Testing
 
