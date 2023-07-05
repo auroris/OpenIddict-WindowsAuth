@@ -31,7 +31,6 @@ namespace IdentityServer
             .ConfigureLogging(logging =>
             {
                 logging.ClearProviders();
-                logging.AddLog4Net(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log4net.xml"));
                 logging.SetMinimumLevel(LogLevel.Debug);
             })
             .ConfigureWebHostDefaults(webBuilder =>

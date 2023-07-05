@@ -4,8 +4,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using System;
-using System.IO;
 
 namespace IdentityServer
 {
@@ -14,7 +12,6 @@ namespace IdentityServer
         public Startup(IConfiguration configuration)
         {
             Program.Configuration = configuration;
-            log4net.Config.XmlConfigurator.Configure(new FileInfo(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log4net.xml")));
         }
 
         public void ConfigureServices(IServiceCollection services)
