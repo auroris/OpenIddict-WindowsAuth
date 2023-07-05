@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.DirectoryServices;
 
-namespace coldlake.mil.ca.ActiveDirectory
+namespace IdentityServer.ActiveDirectory
 {
     /// <summary>
     /// Represents a user represented by a logon account name

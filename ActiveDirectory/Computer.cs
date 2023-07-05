@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.DirectoryServices;
 
-namespace coldlake.mil.ca.ActiveDirectory
+namespace IdentityServer.ActiveDirectory
 {
     public class Computer : ADObject
     {
@@ -26,7 +26,7 @@ namespace coldlake.mil.ca.ActiveDirectory
             }
             return false;
         }
-        
+
         /// <summary>
         /// Gets the object's description
         /// </summary>

@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.DirectoryServices;
 
-namespace coldlake.mil.ca.ActiveDirectory
+namespace IdentityServer.ActiveDirectory
 {
     /// <summary>
     /// Represents a user represented by a logon account name
@@ -20,7 +20,7 @@ namespace coldlake.mil.ca.ActiveDirectory
         {
             if (userName == null || userName == "")
                 throw new ArgumentNullException();
-            
+
             if (userName.Contains("LDAP://"))
             {
                 base.adobject = new DirectoryEntry(userName);
@@ -180,7 +180,7 @@ namespace coldlake.mil.ca.ActiveDirectory
         {
             get { return (String)base.adobject.Properties["st"].Value; }
             set { base.adobject.Properties["st"].Value = value.Length > 0 ? value : null; }
-        }        
+        }
 
         /// <summary>
         /// Gets or sets the user's postal code

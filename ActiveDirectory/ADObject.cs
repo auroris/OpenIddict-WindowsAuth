@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.DirectoryServices;
 using System.Linq;
 
-namespace coldlake.mil.ca.ActiveDirectory
+namespace IdentityServer.ActiveDirectory
 {
     public class ADObject : IDisposable
     {
@@ -14,7 +14,7 @@ namespace coldlake.mil.ca.ActiveDirectory
         protected DirectoryEntry adobject;
         private bool disposedValue;
 
-		public ADObject() { }
+        public ADObject() { }
 
         /// <summary>
         /// Class constructor. Accepts a user's logon name or distinguished name and gets the associated user account in active directory.
@@ -67,7 +67,8 @@ namespace coldlake.mil.ca.ActiveDirectory
 
         public ADGuid ADGuid
         {
-            get {
+            get
+            {
                 return new ADGuid(adobject.NativeGuid);
             }
         }
@@ -85,7 +86,7 @@ namespace coldlake.mil.ca.ActiveDirectory
         /// </summary>
         public String QualifiedName
         {
-            get { return (String)adobject.Properties["distinguishedName"].Value;  }
+            get { return (String)adobject.Properties["distinguishedName"].Value; }
         }
 
         /// <summary>
@@ -169,7 +170,7 @@ namespace coldlake.mil.ca.ActiveDirectory
 
         public Nullable<Int32> GetInt32(String property)
         {
-            if (adobject.Properties[property].Value == null) 
+            if (adobject.Properties[property].Value == null)
             {
                 return null;
             }
@@ -207,12 +208,12 @@ namespace coldlake.mil.ca.ActiveDirectory
             return value;
         }
 
-		protected virtual void Dispose(bool disposing)
-		{
-			if (!disposedValue)
-			{
-				if (disposing)
-				{
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposedValue)
+            {
+                if (disposing)
+                {
                     // dispose managed state (managed objects)
                     adobject.Dispose();
                 }
@@ -222,21 +223,21 @@ namespace coldlake.mil.ca.ActiveDirectory
                 // set large fields to null
                 adobject = null;
 
-				disposedValue = true;
-			}
-		}
+                disposedValue = true;
+            }
+        }
 
-		~ADObject()
-		{
+        ~ADObject()
+        {
             // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
             Dispose(disposing: false);
-		}
+        }
 
-		public void Dispose()
-		{
+        public void Dispose()
+        {
             // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
             Dispose(disposing: true);
-			GC.SuppressFinalize(this);
-		}
-	}
+            GC.SuppressFinalize(this);
+        }
+    }
 }

@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace coldlake.mil.ca.ActiveDirectory
+namespace IdentityServer.ActiveDirectory
 {
     /// <summary>
     /// Because the C# Guid class likes to re-arrange bytes internally
