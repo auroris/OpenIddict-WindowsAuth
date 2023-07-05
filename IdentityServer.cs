@@ -30,8 +30,8 @@ namespace IdentityServer
                 options.AllowAuthorizationCodeFlow();
                 options.AllowImplicitFlow();
                 options.SetIssuer(new Uri(Program.Configuration.GetSection("IdentityServer:ServerUri").Get<string>()))
-                       .SetAuthorizationEndpointUris("/connect/authorize")
-                       .SetTokenEndpointUris("/connect/token");
+                       .SetAuthorizationEndpointUris("connect/authorize")
+                       .SetTokenEndpointUris("connect/token");
                 options.EnableDegradedMode(); // We'll handle authentication and claims ourselves; don't want user stores or such
                 options.UseAspNetCore()
                     .DisableTransportSecurityRequirement(); // Disable the need for HTTPS in dev
