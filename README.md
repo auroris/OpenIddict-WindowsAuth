@@ -9,7 +9,7 @@ Essentially a "copy and paste" OpenID Connect authorization server that doesn't 
 
 OpenIddict-WindowsAuth doesn't have a database, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure the app pool to suspend rather than terminate during periods of inactivity and alter the pool's recycle settings to fire on a set schedule during periods of inactivity.
 
-You must enable Windows Authentication and disable Anonymous Authentication in IIS.
+You must enable both Windows Authentication and Anonymous Authentication in IIS.
 
 ## Configuration
 

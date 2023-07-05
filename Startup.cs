@@ -26,6 +26,7 @@ namespace IdentityServer
             });
             services.AddCors();
             IdentityServer.Add(services);
+            services.AddSingleton<Authentication>();
             services.AddHttpContextAccessor();
             services.AddControllers();
         }
@@ -46,6 +47,7 @@ namespace IdentityServer
             });
 
             app.UseRouting();
+            app.UseMiddleware<Authentication>();
             app.UseAuthentication();
             app.UseAuthorization();
 

@@ -13,7 +13,8 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using User = IdentityServer.ActiveDirectory.User;
-using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Server.IISIntegration;
 
 namespace IdentityServer
 {
@@ -28,7 +29,6 @@ namespace IdentityServer
                 options.AddEphemeralEncryptionKey().AddEphemeralSigningKey();
                 options.AllowAuthorizationCodeFlow();
                 options.AllowImplicitFlow();
-                options.AllowHybridFlow();
                 options.SetIssuer(new Uri(Program.Configuration.GetSection("IdentityServer:ServerUri").Get<string>()))
                        .SetAuthorizationEndpointUris("/connect/authorize")
                        .SetTokenEndpointUris("/connect/token");
@@ -68,9 +68,12 @@ namespace IdentityServer
                     builder.UseInlineHandler(async context =>
                     {
                         HttpRequest request = context.Transaction.GetHttpRequest() ?? throw new InvalidOperationException("The ASP.NET Core request cannot be retrieved.");
-                        WindowsIdentity wi = (WindowsIdentity)request.HttpContext.User.Identity ?? throw new InvalidOperationException("No windows identity could be obtained.");
+                        AuthenticateResult result = await request.HttpContext.AuthenticateAsync(IISDefaults.AuthenticationScheme);
+                        if (!result.Succeeded) { throw new Exception("Could not authenticate."); }
+
                         ClaimsIdentity identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType);
-                        
+                        WindowsIdentity wi = (WindowsIdentity)request.HttpContext.User.Identity;
+
                         // If the user is a member of the local login users group, then this is a locally logged on user and likely Active Directory is not available
                         bool isLocal = wi.FindAll(ClaimTypes.GroupSid).Where(g => g.Value == "S-1-2-0").Count() > 0;
 
