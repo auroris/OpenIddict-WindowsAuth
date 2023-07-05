@@ -2,9 +2,11 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.DirectoryServices;
+using System.Runtime.Versioning;
 
 namespace IdentityServer.ActiveDirectory
 {
+    [SupportedOSPlatform("windows")]
     public class Printer : ADObject
     {
         public Printer() { }

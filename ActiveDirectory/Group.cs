@@ -1,12 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
+using System.Runtime.Versioning;
 
 namespace IdentityServer.ActiveDirectory
 {
     /// <summary>
     /// Represents a user represented by a logon account name
     /// </summary>
+    [SupportedOSPlatform("windows")]
     public class Group : ADObject
     {
         public Group() { }

@@ -2,9 +2,11 @@
 using System.Collections.Generic;
 using System.DirectoryServices;
 using System.Linq;
+using System.Runtime.Versioning;
 
 namespace IdentityServer.ActiveDirectory
 {
+    [SupportedOSPlatform("windows")]
     public class ADObject : IDisposable
     {
         public const string LDAP_MATCHING_RULE_BIT_AND = "1.2.840.113556.1.4.803"; // A match is found only if all bits from the attribute match the value. This rule is equivalent to a bitwise AND operator. 
