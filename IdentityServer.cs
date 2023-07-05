@@ -67,7 +67,7 @@ namespace IdentityServer
                     builder.UseInlineHandler(async context =>
                     {
                         HttpRequest request = context.Transaction.GetHttpRequest() ?? throw new InvalidOperationException("The ASP.NET Core request cannot be retrieved.");
-                        WindowsIdentity wi = (WindowsIdentity)request.HttpContext.User.Identity!;
+                        WindowsIdentity wi = (WindowsIdentity)request.HttpContext.User.Identity ?? throw new InvalidOperationException("No windows identity could be obtained.");
                         ClaimsIdentity identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType);
                         bool isLocal = wi.FindAll(ClaimTypes.GroupSid).Where(g => g.Value == "S-1-2-0").Count() > 0;
 
@@ -76,22 +76,22 @@ namespace IdentityServer
                             if (context.Request.HasScope(Scopes.OpenId))
                             {
                                 // Add the name identifier claim; this is the user's unique identifier
-                                identity.AddClaim(Claims.Subject, wi.FindFirst(ClaimTypes.PrimarySid).Value, Destinations.AccessToken);
+                                identity.AddClaim(Claims.Subject, wi.FindFirst(ClaimTypes.PrimarySid).Value);
 
                                 // Add the account's friendly name
-                                identity.AddClaim(ClaimTypes.Name, wi.FindFirst(ClaimTypes.Name).Value.Split("\\")[1], Destinations.IdentityToken);
+                                identity.AddClaim(ClaimTypes.Name, wi.FindFirst(ClaimTypes.Name).Value.Split("\\")[1]);
                             }
 
                             if (context.Request.HasScope(Scopes.Profile))
                             {
                                 // Add the user's windows username
-                                identity.AddClaim(ClaimTypes.WindowsAccountName, wi.FindFirst(ClaimTypes.Name).Value, Destinations.IdentityToken);
+                                identity.AddClaim(ClaimTypes.WindowsAccountName, wi.FindFirst(ClaimTypes.Name).Value);
                             }
 
                             if (context.Request.HasScope(Scopes.Email))
                             {
                                 // Add the email address
-                                identity.AddClaim(ClaimTypes.Email, wi.FindFirst(ClaimTypes.Name).Value.Split("\\")[1] + "@localhost", Destinations.IdentityToken);
+                                identity.AddClaim(ClaimTypes.Email, wi.FindFirst(ClaimTypes.Name).Value.Split("\\")[1] + "@localhost");
                             }
                         }
                         else
@@ -103,10 +103,10 @@ namespace IdentityServer
                             if (context.Request.HasScope(Scopes.OpenId))
                             {
                                 // Add the name identifier claim; this is the user's unique identifier
-                                identity.AddClaim(Claims.Subject, wi.FindFirst(ClaimTypes.PrimarySid).Value, Destinations.AccessToken);
+                                identity.AddClaim(Claims.Subject, wi.FindFirst(ClaimTypes.PrimarySid).Value);
 
                                 // Add the account's friendly name
-                                identity.AddClaim(ClaimTypes.Name, user.DisplayName, Destinations.IdentityToken);
+                                identity.AddClaim(ClaimTypes.Name, user.DisplayName);
                             }
 
                             // Attach email address if requested
@@ -115,11 +115,11 @@ namespace IdentityServer
                                 // Add the user's email address
                                 if (user.Email != null)
                                 {
-                                    identity.AddClaim(ClaimTypes.Email, user.Email, Destinations.IdentityToken);
+                                    identity.AddClaim(ClaimTypes.Email, user.Email);
                                 }
                                 else
                                 {
-                                    identity.AddClaim(ClaimTypes.Email, user.Username + "@localhost", Destinations.IdentityToken);
+                                    identity.AddClaim(ClaimTypes.Email, user.Username + "@localhost");
                                 }
                             }
 
@@ -127,14 +127,14 @@ namespace IdentityServer
                             if (context.Request.HasScope(Scopes.Profile))
                             {
                                 // Add the user's windows username
-                                identity.AddClaim(ClaimTypes.WindowsAccountName, wi.FindFirst(ClaimTypes.Name).Value, Destinations.IdentityToken);
+                                identity.AddClaim(ClaimTypes.WindowsAccountName, wi.FindFirst(ClaimTypes.Name).Value);
 
                                 // Add the user's name
-                                if (user.FirstName != null) { identity.AddClaim(ClaimTypes.GivenName, user.FirstName, Destinations.IdentityToken); }
-                                if (user.LastName != null) { identity.AddClaim(ClaimTypes.Surname, user.LastName, Destinations.IdentityToken); }
+                                if (user.FirstName != null) { identity.AddClaim(ClaimTypes.GivenName, user.FirstName); }
+                                if (user.LastName != null) { identity.AddClaim(ClaimTypes.Surname, user.LastName); }
 
                                 // Telephone #
-                                if (user.TelephoneNumber != null) { identity.AddClaim(ClaimTypes.HomePhone, user.TelephoneNumber, Destinations.IdentityToken); }
+                                if (user.TelephoneNumber != null) { identity.AddClaim(ClaimTypes.HomePhone, user.TelephoneNumber); }
                             }
 
                             // Attach roles if requested
@@ -158,7 +158,7 @@ namespace IdentityServer
                                 // Add the groups to the claims
                                 foreach (string group in identityGroups)
                                 {
-                                    identity.AddClaim(ClaimTypes.Role, group, Destinations.IdentityToken);
+                                    identity.AddClaim(ClaimTypes.Role, group);
                                 }
                             }
                         }
