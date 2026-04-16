@@ -306,8 +306,13 @@ namespace IdentityServer
                                             identity.AddClaim(ClaimTypes.Role, group);
                                         }
                                     }
-                                    logger.LogDebug("User {User} has {Total} AD groups; {Matched} matched configured patterns",
-                                        winAccountName, groups.Count, identity.FindAll(ClaimTypes.Role).Count());
+                                    var matchedRoles = identity.FindAll(ClaimTypes.Role).ToList();
+                                    int roleCharCount = matchedRoles.Sum(c => c.Value.Length);
+                                    logger.LogDebug("User {User} has {Total} AD groups; {Matched} matched configured patterns ({Chars} chars)",
+                                        winAccountName, groups.Count, matchedRoles.Count, roleCharCount);
+                                    if (roleCharCount > 4096)
+                                        logger.LogWarning("User {User} has {Chars} characters of role claims — token may be large enough to trigger HTTP 431 errors. Consider tightening IdentityServer:Groups patterns.",
+                                            winAccountName, roleCharCount);
                                 }
                             }
 
@@ -319,13 +324,29 @@ namespace IdentityServer
                             });
 
                             context.Principal = new ClaimsPrincipal(identity);
-                            logger.LogInformation("Authorization granted for {User}", winAccountName);
+                            logger.LogInformation("Authorization granted for {User} via {AuthType}", winAccountName, wi.AuthenticationType);
                         }
                         catch (Exception ex)
                         {
                             logger.LogError(ex, "Error building authorization claims for user '{User}'", winAccountName ?? "(unknown)");
                             context.Reject(error: Errors.ServerError, description: "An internal error occurred while processing the authorization request.");
                         }
+                    }));
+
+                // Log the serialized token sizes so oversized tokens are caught before they
+                // cause HTTP 431 errors on downstream services using them as Bearer headers.
+                options.AddEventHandler<ApplyTokenResponseContext>(builder =>
+                    builder.UseInlineHandler(context =>
+                    {
+                        var logger = GetLogger(context.Transaction.GetHttpRequest()?.HttpContext);
+                        int accessTokenLength = context.Response.AccessToken?.Length ?? 0;
+                        int idTokenLength     = context.Response.IdToken?.Length     ?? 0;
+                        logger.LogDebug("Token response sizes — access_token: {AccessLen} chars, id_token: {IdLen} chars",
+                            accessTokenLength, idTokenLength);
+                        if (accessTokenLength > 8192)
+                            logger.LogWarning("access_token is {AccessLen} chars — downstream services using it as a Bearer header may receive HTTP 431 errors.",
+                                accessTokenLength);
+                        return default;
                     }));
             })
             .AddValidation(options =>

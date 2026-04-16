@@ -53,6 +53,15 @@ namespace IdentityServer
 		{
 			Program.LoggerFactory = loggerFactory;
 
+            var startupLogger = loggerFactory.CreateLogger<Startup>();
+            bool persistKeys = Program.Configuration.GetValue<bool>("IdentityServer:PersistKeys");
+            string serverUri = Program.Configuration.GetValue<string>("IdentityServer:ServerUri") ?? "*";
+            string[] hosts = Program.Configuration.GetSection("IdentityServer:Hosts").Get<string[]>() ?? [];
+            if (!persistKeys)
+                startupLogger.LogWarning("PersistKeys is false — signing keys are ephemeral and tokens will not survive application restarts.");
+            startupLogger.LogInformation("ServerUri: {ServerUri}", serverUri == "*" ? "* (auto-detect from request)" : serverUri);
+            startupLogger.LogInformation("Allowed hosts: {Hosts}", hosts.Length > 0 ? string.Join(", ", hosts) : "(none configured)");
+
 			if (env.IsDevelopment())
 			{
 				app.UseDeveloperExceptionPage();
