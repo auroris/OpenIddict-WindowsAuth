@@ -336,8 +336,8 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (_cache.TryGetValue(propertyName, out var vals) && vals.Count > 0)
-                    return vals[0] as string ?? "";
+                if (_cache.TryGetValue(propertyName, out var vals))
+                    return vals.Count > 0 ? vals[0] as string ?? "" : "";
                 if (adobject == null)
                     throw new InvalidOperationException(
                         $"Property '{propertyName}' was not included in the search results. " +
@@ -373,7 +373,7 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
+                if (_cache.TryGetValue(property, out var vals))
                 {
                     var result = new List<string>(vals.Count);
                     foreach (var v in vals)
@@ -411,8 +411,8 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
-                    return vals[0] is int i ? i : null;
+                if (_cache.TryGetValue(property, out var vals))
+                    return vals.Count > 0 && vals[0] is int i ? i : null;
                 if (adobject == null)
                     throw new InvalidOperationException(
                         $"Property '{property}' was not included in the search results. " +
@@ -444,8 +444,8 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
-                    return vals[0] is bool b ? b : defaultValue;
+                if (_cache.TryGetValue(property, out var vals))
+                    return vals.Count > 0 && vals[0] is bool b ? b : defaultValue;
                 if (adobject == null)
                     throw new InvalidOperationException(
                         $"Property '{property}' was not included in the search results. " +
@@ -472,8 +472,9 @@ namespace ActiveDirectory
             object? val;
             if (_cache != null)
             {
-                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
+                if (_cache.TryGetValue(property, out var vals))
                 {
+                    if (vals.Count == 0) return null;
                     val = vals[0];
                     if (val == null) return null;
                     if (val is long l) return l;
