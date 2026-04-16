@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore;
+using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using System;
@@ -11,173 +13,264 @@ using System.Security.Principal;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 using System.Text.RegularExpressions;
-using System.Collections.Generic;
-using User = IdentityServer.ActiveDirectory.User;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Server.IISIntegration;
+using ActiveDirectory;
 
 namespace IdentityServer
 {
+    /// <summary>
+    /// Configures the OpenIddict server and validation stack.
+    /// Runs in degraded mode (no user store) with custom event handlers that resolve
+    /// identity claims from Windows Authentication and Active Directory.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Supported flows: Authorization Code and Implicit.
+    /// Supported scopes: <c>openid</c>, <c>email</c>, <c>profile</c>, <c>roles</c>.
+    /// </para>
+    /// <para>
+    /// Encryption and signing keys are ephemeral — they do not survive application restarts.
+    /// This is acceptable for environments where the IIS application pool is long-lived, but
+    /// means that tokens issued before a restart cannot be validated afterwards.
+    /// </para>
+    /// </remarks>
     public class IdentityServer
     {
+        private sealed class ClientConfig
+        {
+            public string ClientId { get; init; } = "";
+            public string? ClientSecret { get; init; }
+        }
+
+        /// <summary>
+        /// Finds a matching client from <c>IdentityServer:Clients</c> by exact <paramref name="clientId"/>
+        /// or by the <c>*</c> wildcard entry. Returns <see langword="null"/> if the list is configured
+        /// but contains no match, or a wildcard <c>ClientConfig</c> if the list is absent (open access).
+        /// </summary>
+        private static ClientConfig? FindClient(string? clientId)
+        {
+            var clients = Program.Configuration.GetSection("IdentityServer:Clients").Get<ClientConfig[]>();
+            if (clients == null || clients.Length == 0)
+                return new ClientConfig { ClientId = "*" }; // no list configured: accept any client
+
+            return clients.FirstOrDefault(c => c.ClientId.Equals(clientId ?? "", StringComparison.OrdinalIgnoreCase))
+                ?? clients.FirstOrDefault(c => c.ClientId == "*");
+        }
+
+        /// <summary>
+        /// Returns a logger for this class, resolved from the request's DI container when available,
+        /// falling back to <see cref="Program.LoggerFactory"/> or a null logger.
+        /// </summary>
+        private static ILogger GetLogger(HttpContext? httpContext) =>
+            (httpContext?.RequestServices.GetService<ILoggerFactory>()
+             ?? Program.LoggerFactory
+             ?? NullLoggerFactory.Instance)
+            .CreateLogger<IdentityServer>();
+
+        private static Regex[]? _validGroupPatterns;
+        private static Regex[] ValidGroupPatterns => _validGroupPatterns ??=
+            Program.Configuration.GetSection("IdentityServer:Groups").Get<string[]>()!
+                .Select(g => new Regex(g, RegexOptions.IgnoreCase | RegexOptions.Compiled))
+                .ToArray();
+
+        /// <summary>
+        /// Registers OpenIddict server and validation services in the DI container.
+        /// Reads <c>IdentityServer:ServerUri</c>, <c>IdentityServer:Hosts</c>, and
+        /// <c>IdentityServer:Groups</c> from <see cref="Program.Configuration"/>.
+        /// </summary>
+        /// <param name="services">The application service collection.</param>
         public static void Add(IServiceCollection services)
         {
-            // Attach OpenIddict with a ton of options
             services.AddOpenIddict().AddServer(options =>
             {
-                // This OpenIddict server is stateless; however, make sure IIS doesn't dispose of the application too often (ie, via app pool recycles or shut downs due to inactivity)
+                // Ephemeral keys: suitable for IIS-hosted scenarios where the app pool is long-lived
                 options.AddEphemeralEncryptionKey().AddEphemeralSigningKey();
                 options.AllowAuthorizationCodeFlow();
                 options.AllowImplicitFlow();
-                options.SetIssuer(new Uri(Program.Configuration.GetSection("IdentityServer:ServerUri").Get<string>()))
-                       .SetAuthorizationEndpointUris("connect/authorize")
+                var serverUri = Program.Configuration.GetSection("IdentityServer:ServerUri").Get<string>();
+                if (!string.IsNullOrEmpty(serverUri) && serverUri != "*")
+                    options.SetIssuer(new Uri(serverUri));
+                options.SetAuthorizationEndpointUris("connect/authorize")
                        .SetTokenEndpointUris("connect/token");
-                options.EnableDegradedMode(); // We'll handle authentication and claims ourselves; don't want user stores or such
+                options.EnableDegradedMode();
                 options.UseAspNetCore()
-                    .DisableTransportSecurityRequirement(); // Disable the need for HTTPS in dev
-                options.RegisterScopes(Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.Roles); // Tell OpenIddict that we support these scopes
+                    .DisableTransportSecurityRequirement();
+                options.RegisterScopes(Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.Roles);
 
-                // Event handler for validating authorization requests
+                // Validate authorization requests: verify client_id against IdentityServer:Clients
+                // and redirect_uri host against IdentityServer:Hosts.
                 options.AddEventHandler<ValidateAuthorizationRequestContext>(builder =>
                     builder.UseInlineHandler(context =>
                     {
-                        // Verification: I accept all context.ClientId's, but do check to see if the context.RedirectUri is proper
-                        // Partial matches, case insensitive
-                        if (Program.Configuration.GetSection("IdentityServer:Hosts").Get<string[]>().Any(s => context.RedirectUri.Contains(s, StringComparison.InvariantCultureIgnoreCase)))
+                        var logger = GetLogger(context.Transaction.GetHttpRequest()?.HttpContext);
+
+                        if (FindClient(context.Request.ClientId) == null)
+                        {
+                            logger.LogWarning("Authorization request rejected: unknown client_id '{ClientId}'",
+                                context.Request.ClientId);
+                            context.Reject(
+                                error: Errors.InvalidClient,
+                                description: "The specified client_id is not valid.");
+                            return default;
+                        }
+
+                        var redirectHost = new Uri(context.RedirectUri!).Host;
+                        if (Program.Configuration.GetSection("IdentityServer:Hosts").Get<string[]>()!
+                            .Any(s => new Uri(s).Host.Equals(redirectHost, StringComparison.OrdinalIgnoreCase)))
                         {
                             return default;
                         }
 
-                        // Fall-through: URL was not proper.
+                        logger.LogWarning("Authorization request rejected: redirect_uri '{RedirectUri}' host not in allowed list",
+                            context.RedirectUri);
                         context.Reject(
                             error: Errors.InvalidClient,
-                            description: "The specified redirect_uri " + context.RedirectUri + " is not valid. Check the IdentityServer:Hosts key in appsettings.json for valid values.");
+                            description: "The specified redirect_uri is not valid.");
                         return default;
                     }));
 
-                // Event handler for validating token requests
+                // Validate token requests: verify client_id against IdentityServer:Clients, and
+                // client_secret if one is configured for the matched client.
+                // Use ClientSecret: "*" to accept any secret without validating it.
                 options.AddEventHandler<ValidateTokenRequestContext>(builder =>
                     builder.UseInlineHandler(context =>
                     {
-                        // I accept all context.ClientId's, so just carry on.
+                        var logger = GetLogger(context.Transaction.GetHttpRequest()?.HttpContext);
+
+                        var client = FindClient(context.Request.ClientId);
+                        if (client == null)
+                        {
+                            logger.LogWarning("Token request rejected: unknown client_id '{ClientId}'",
+                                context.Request.ClientId);
+                            context.Reject(
+                                error: Errors.InvalidClient,
+                                description: "The specified client_id is not valid.");
+                            return default;
+                        }
+
+                        if (client.ClientSecret != null && client.ClientSecret != "*" &&
+                            !string.Equals(client.ClientSecret, context.Request.ClientSecret, StringComparison.Ordinal))
+                        {
+                            logger.LogWarning("Token request rejected: invalid client_secret for client '{ClientId}'",
+                                context.Request.ClientId);
+                            context.Reject(
+                                error: Errors.InvalidClient,
+                                description: "The specified client_secret is not valid.");
+                            return default;
+                        }
+
                         return default;
                     }));
 
-                // Event handler for authorization requests
+                // Handle authorization requests: build claims from Windows identity and AD
                 options.AddEventHandler<HandleAuthorizationRequestContext>(builder =>
                     builder.UseInlineHandler(async context =>
                     {
-                        HttpRequest request = context.Transaction.GetHttpRequest() ?? throw new InvalidOperationException("The ASP.NET Core request cannot be retrieved.");
-                        AuthenticateResult result = await request.HttpContext.AuthenticateAsync(IISDefaults.AuthenticationScheme);
-                        if (!result.Succeeded) { throw new Exception("Could not authenticate."); }
-
-                        ClaimsIdentity identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType);
-                        WindowsIdentity wi = (WindowsIdentity)request.HttpContext.User.Identity;
-
-                        // If the user is a member of the local login users group, then this is a locally logged on user and likely Active Directory is not available
-                        bool isLocal = wi.FindAll(ClaimTypes.GroupSid).Where(g => g.Value == "S-1-2-0").Count() > 0;
-
-                        if (isLocal)
+                        var logger = GetLogger(context.Transaction.GetHttpRequest()?.HttpContext);
+                        string? winAccountName = null;
+                        try
                         {
-                            if (context.Request.HasScope(Scopes.OpenId))
-                            {
-                                // Add the name identifier claim; this is the user's unique identifier
-                                identity.AddClaim(Claims.Subject, wi.FindFirst(ClaimTypes.PrimarySid).Value);
+                            HttpRequest request = context.Transaction.GetHttpRequest()
+                                ?? throw new InvalidOperationException("The ASP.NET Core request cannot be retrieved.");
 
-                                // Add the account's friendly name
-                                identity.AddClaim(ClaimTypes.Name, wi.FindFirst(ClaimTypes.Name).Value.Split("\\")[1]);
+                            AuthenticateResult result = await request.HttpContext.AuthenticateAsync(IISDefaults.AuthenticationScheme);
+                            if (!result.Succeeded)
+                            {
+                                logger.LogWarning("Windows authentication failed for authorization request from {RemoteIp}: {Failure}",
+                                    request.HttpContext.Connection.RemoteIpAddress,
+                                    result.Failure?.Message ?? "(no details)");
+                                context.Reject(error: Errors.AccessDenied, description: "Windows authentication failed.");
+                                return;
                             }
 
-                            if (context.Request.HasScope(Scopes.Profile))
-                            {
-                                // Add the user's windows username
-                                identity.AddClaim(ClaimTypes.WindowsAccountName, wi.FindFirst(ClaimTypes.Name).Value);
-                            }
+                            ClaimsIdentity identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType);
+                            WindowsIdentity wi = (WindowsIdentity)request.HttpContext.User.Identity!;
 
-                            if (context.Request.HasScope(Scopes.Email))
-                            {
-                                // Add the email address
-                                identity.AddClaim(ClaimTypes.Email, wi.FindFirst(ClaimTypes.Name).Value.Split("\\")[1] + "@localhost");
-                            }
-                        }
-                        else
-                        {
-                            // Get information about the user
-                            User user = new User(wi.FindFirst(ClaimTypes.Name).Value);
+                            // S-1-2-0 is the "Local" well-known SID; its presence means the user
+                            // is logged on locally and Active Directory may not be reachable
+                            bool isLocal = wi.FindAll(ClaimTypes.GroupSid).Any(g => g.Value == "S-1-2-0");
 
-                            // Attach basic id if requested
-                            if (context.Request.HasScope(Scopes.OpenId))
-                            {
-                                // Add the name identifier claim; this is the user's unique identifier
-                                identity.AddClaim(Claims.Subject, wi.FindFirst(ClaimTypes.PrimarySid).Value);
+                            winAccountName = wi.FindFirst(ClaimTypes.Name)!.Value;
+                            string primarySid = wi.FindFirst(ClaimTypes.PrimarySid)!.Value;
+                            string samName    = winAccountName.Contains('\\') ? winAccountName.Split('\\')[1] : winAccountName;
 
-                                // Add the account's friendly name
-                                identity.AddClaim(ClaimTypes.Name, user.DisplayName);
-                            }
+                            logger.LogDebug("Building claims for {User} (local: {IsLocal}, scopes: {Scopes})",
+                                winAccountName, isLocal, string.Join(" ", context.Request.GetScopes()));
 
-                            // Attach email address if requested
-                            if (context.Request.HasScope(Scopes.Email))
+                            if (isLocal)
                             {
-                                // Add the user's email address
-                                if (user.Email != null)
+                                if (context.Request.HasScope(Scopes.OpenId))
                                 {
-                                    identity.AddClaim(ClaimTypes.Email, user.Email);
+                                    identity.AddClaim(Claims.Subject, primarySid);
+                                    identity.AddClaim(ClaimTypes.Name, samName);
                                 }
-                                else
+
+                                if (context.Request.HasScope(Scopes.Profile))
                                 {
-                                    identity.AddClaim(ClaimTypes.Email, user.Username + "@localhost");
+                                    identity.AddClaim(ClaimTypes.WindowsAccountName, winAccountName);
+                                }
+
+                                if (context.Request.HasScope(Scopes.Email))
+                                {
+                                    identity.AddClaim(ClaimTypes.Email, samName + "@localhost");
                                 }
                             }
-
-                            // Attach profile stuff if requested
-                            if (context.Request.HasScope(Scopes.Profile))
+                            else
                             {
-                                // Add the user's windows username
-                                identity.AddClaim(ClaimTypes.WindowsAccountName, wi.FindFirst(ClaimTypes.Name).Value);
+                                // Fetch user attributes from Active Directory
+                                using ADUser user = new ADUser(winAccountName);
 
-                                // Add the user's name
-                                if (user.FirstName != null) { identity.AddClaim(ClaimTypes.GivenName, user.FirstName); }
-                                if (user.LastName != null) { identity.AddClaim(ClaimTypes.Surname, user.LastName); }
-
-                                // Telephone #
-                                if (user.TelephoneNumber != null) { identity.AddClaim(ClaimTypes.HomePhone, user.TelephoneNumber); }
-                            }
-
-                            // Attach roles if requested
-                            if (context.Request.HasScope(Scopes.Roles))
-                            {
-                                Regex[] validGroups = Program.Configuration.GetSection("IdentityServer:Groups").Get<string[]>().Select(group => new Regex(group, RegexOptions.IgnoreCase)).ToArray();
-                                HashSet<string> identityGroups = new HashSet<string>();
-
-                                // Get group claims, filter duplicates
-                                foreach (String group in user.GroupsCommonName)
+                                if (context.Request.HasScope(Scopes.OpenId))
                                 {
-                                    foreach (Regex rx in validGroups)
+                                    identity.AddClaim(Claims.Subject, primarySid);
+                                    identity.AddClaim(ClaimTypes.Name, user.DisplayName);
+                                }
+
+                                if (context.Request.HasScope(Scopes.Email))
+                                {
+                                    identity.AddClaim(ClaimTypes.Email, !string.IsNullOrEmpty(user.Email) ? user.Email : user.Username + "@localhost");
+                                }
+
+                                if (context.Request.HasScope(Scopes.Profile))
+                                {
+                                    identity.AddClaim(ClaimTypes.WindowsAccountName, winAccountName);
+                                    if (!string.IsNullOrEmpty(user.GivenName)) { identity.AddClaim(ClaimTypes.GivenName, user.GivenName); }
+                                    if (!string.IsNullOrEmpty(user.Surname)) { identity.AddClaim(ClaimTypes.Surname, user.Surname); }
+                                    if (!string.IsNullOrEmpty(user.TelephoneNumber)) { identity.AddClaim(ClaimTypes.HomePhone, user.TelephoneNumber); }
+                                }
+
+                                if (context.Request.HasScope(Scopes.Roles))
+                                {
+                                    // Filter AD groups against the regex patterns in IdentityServer:Groups
+                                    var groups = user.GroupsCommonName;
+                                    foreach (string group in groups)
                                     {
-                                        if (rx.Matches(group).Count > 0)
+                                        if (ValidGroupPatterns.Any(rx => rx.IsMatch(group)))
                                         {
-                                            identityGroups.Add(group);
+                                            identity.AddClaim(ClaimTypes.Role, group);
                                         }
                                     }
-                                }
-
-                                // Add the groups to the claims
-                                foreach (string group in identityGroups)
-                                {
-                                    identity.AddClaim(ClaimTypes.Role, group);
+                                    logger.LogDebug("User {User} has {Total} AD groups; {Matched} matched configured patterns",
+                                        winAccountName, groups.Count, identity.FindAll(ClaimTypes.Role).Count());
                                 }
                             }
+
+                            // Include all claims in both the access token and the identity token
+                            identity.SetDestinations(claim => new[]
+                            {
+                                Destinations.AccessToken,
+                                Destinations.IdentityToken
+                            });
+
+                            context.Principal = new ClaimsPrincipal(identity);
+                            logger.LogInformation("Authorization granted for {User}", winAccountName);
                         }
-
-                        // Allow all claims to be expressed in both the access token and identity token; see https://documentation.openiddict.com/configuration/claim-destinations.html
-                        identity.SetDestinations(claim => new[]
+                        catch (Exception ex)
                         {
-                            Destinations.AccessToken,
-                            Destinations.IdentityToken
-                        });
-
-                        // Attach the claims principal to the authorization context so OpenIddict can send a response
-                        context.Principal = new ClaimsPrincipal(identity);
+                            logger.LogError(ex, "Error building authorization claims for user '{User}'", winAccountName ?? "(unknown)");
+                            context.Reject(error: Errors.ServerError, description: "An internal error occurred while processing the authorization request.");
+                        }
                     }));
             })
             .AddValidation(options =>
