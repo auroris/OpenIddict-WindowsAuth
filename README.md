@@ -12,6 +12,8 @@ An OpenID Connect authorization server that uses Windows Integrated Authenticati
 - [Configuration](#configuration)
   - [Example appsettings.json](#example-appsettingsjson)
   - [Configuration keys](#configuration-keys)
+    - [IdentityServer:PersistKeys](#identityserverpersistkeys)
+    - [IdentityServer:DataPath](#identityserverdatapath)
 - [Supported flows, scopes, and claims](#supported-flows-scopes-and-claims)
 - [Testing](#testing)
   - [Testing with oidcdebugger.com](#testing-with-oidcdebuggercom)
@@ -24,7 +26,7 @@ A drop-in OpenID Connect authorization server that requires no database, no cert
 
 **Tradeoffs to be aware of:**
 
-- Signing and encryption keys are ephemeral — they are regenerated on every application start. Tokens issued before a restart or app pool recycle cannot be validated afterwards.
+- By default, signing and encryption keys are ephemeral — regenerated on every application start. Set `IdentityServer:PersistKeys` to `true` to survive restarts (see [IdentityServer:PersistKeys](#identityserverpersistkeys)).
 - There is no refresh token flow: tokens have a fixed lifetime and clients must re-authenticate when they expire.
 - Suitable for intranet scenarios where a short-lived token model is acceptable and the user population is already authenticated to Windows.
 
@@ -42,9 +44,11 @@ A drop-in OpenID Connect authorization server that requires no database, no cert
 3. In IIS Manager, open the site's **Authentication** feature and enable **both**:
    - **Windows Authentication** (required — this is how users are authenticated)
    - **Anonymous Authentication** (required — the `/connect/token` and `/.well-known/*` endpoints must be reachable without a Windows challenge)
-4. Because tokens do not survive application restarts, configure the app pool's recycle settings:
+4. If `IdentityServer:PersistKeys` is `false` (the default), tokens do not survive application restarts. To minimise disruption, configure the app pool's recycle settings:
    - Disable idle timeout or set **Idle Time-out Action** to `Suspend` (rather than `Terminate`)
    - Move the daily recycle to a low-traffic hour, or disable it in favor of a fixed schedule
+   
+   If `PersistKeys` is `true`, the app pool identity needs write access to the key storage directory (see [IdentityServer:DataPath](#identityserverdatapath)) and recycle timing is no longer a token-validity concern.
 
 ## Configuration
 
@@ -63,6 +67,7 @@ Configuration is read from `appsettings.json`. Environment variables and command
   "IdentityServer": {
     "ServerUri": "*",
     "UseForwardedHeaders": false,
+    "PersistKeys": false,
     "Hosts": [
       "http://localhost",
       "https://localhost",
@@ -92,6 +97,25 @@ Set to `"*"` (the default) to auto-detect the issuer from the incoming request U
 #### IdentityServer:UseForwardedHeaders
 
 Set to `true` to enable ASP.NET Core's forwarded-headers middleware, which rewrites the request scheme and host from `X-Forwarded-Proto` and `X-Forwarded-Host`. Enable this when the app sits behind a reverse proxy (IIS ARR, nginx, etc.) so issuer auto-detection and redirect URIs reflect the public-facing address. Defaults to `false`.
+
+#### IdentityServer:PersistKeys
+
+Controls whether signing and encryption keys are persisted across application restarts.
+
+- `false` (default) — ephemeral keys are generated fresh on every startup. Tokens issued before a restart cannot be validated afterwards.
+- `true` — keys are written to disk (see [IdentityServer:DataPath](#identityserverdatapath)) and reloaded on startup, so existing tokens remain valid across app pool recycles.
+
+When `true`, key files are encrypted at rest with the Windows Data Protection API (`ProtectedData`, machine scope). Only processes running on the same machine can decrypt them; the raw private key bytes are never written to disk in plaintext.
+
+#### IdentityServer:DataPath
+
+The directory where key files are stored when `IdentityServer:PersistKeys` is `true`. Defaults to a `keys` subfolder inside the application's base directory.
+
+The IIS app pool identity needs **read and write** access to this path. You can place it outside the web root to keep key files away from the published application files:
+
+```json
+"DataPath": "C:\\inetpub\\IdentityServerKeys"
+```
 
 #### IdentityServer:Hosts
 
@@ -223,7 +247,7 @@ You can also combine `code` + `token` or all three (`code`, `token`, `id_token`)
 Anonymous Authentication is likely disabled in IIS, or Windows Authentication is not enabled at all. Both must be turned on. Also confirm the browser trusts the site for integrated authentication (for IE/Edge/Chrome, the site must be in the Local Intranet zone or explicitly whitelisted).
 
 **Tokens issued before a restart fail validation afterwards.**
-Expected. Signing and encryption keys are ephemeral. Configure the IIS app pool to suspend rather than terminate on idle, and to recycle on a predictable schedule.
+Expected when `IdentityServer:PersistKeys` is `false` (the default). Set it to `true` to persist keys across restarts. If you prefer ephemeral keys, configure the IIS app pool to suspend rather than terminate on idle, and to recycle on a predictable schedule.
 
 **Issuer in tokens doesn't match the URL clients use.**
 Either set `IdentityServer:ServerUri` to the canonical public URL explicitly, or — if behind a reverse proxy — set `IdentityServer:UseForwardedHeaders` to `true` and ensure the proxy is sending `X-Forwarded-Proto` and `X-Forwarded-Host`.

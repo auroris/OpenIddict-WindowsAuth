@@ -7,8 +7,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using System;
+using System.IO;
 using System.Linq;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Security.Principal;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
@@ -30,9 +33,11 @@ namespace IdentityServer
     /// Supported scopes: <c>openid</c>, <c>email</c>, <c>profile</c>, <c>roles</c>.
     /// </para>
     /// <para>
-    /// Encryption and signing keys are ephemeral — they do not survive application restarts.
-    /// This is acceptable for environments where the IIS application pool is long-lived, but
-    /// means that tokens issued before a restart cannot be validated afterwards.
+    /// When <c>IdentityServer:PersistKeys</c> is <see langword="true"/>, signing and encryption keys
+    /// are persisted to disk (under <c>IdentityServer:DataPath</c>), protected at rest with Windows
+    /// DPAPI, so the same key material survives app pool recycles and avoids JWKS cache mismatches
+    /// in OIDC clients. When <see langword="false"/> (default), ephemeral keys are generated on
+    /// every startup.
     /// </para>
     /// </remarks>
     public class IdentityServer
@@ -75,6 +80,39 @@ namespace IdentityServer
                 .ToArray();
 
         /// <summary>
+        /// Loads a persistent RSA key from <paramref name="filename"/> under <c>IdentityServer:DataPath</c>
+        /// (defaulting to a <c>keys</c> subfolder of the app base directory), generating and saving a new
+        /// 2048-bit key if the file does not yet exist.
+        /// </summary>
+        /// <remarks>
+        /// Private key material is encrypted at rest with Windows DPAPI
+        /// (<see cref="DataProtectionScope.LocalMachine"/>); the raw key bytes are never written to disk
+        /// in plaintext. Only processes running on the same machine can decrypt the file.
+        /// </remarks>
+        private static RsaSecurityKey LoadOrCreateRsaKey(string filename)
+        {
+            var dataPath = Program.Configuration.GetValue<string>("IdentityServer:DataPath")
+                           ?? Path.Combine(AppContext.BaseDirectory, "keys");
+            Directory.CreateDirectory(dataPath);
+            var keyPath = Path.Combine(dataPath, filename);
+
+            var rsa = RSA.Create(2048);
+            if (File.Exists(keyPath))
+            {
+                byte[] decrypted = ProtectedData.Unprotect(
+                    File.ReadAllBytes(keyPath), null, DataProtectionScope.LocalMachine);
+                rsa.ImportFromPem(Encoding.UTF8.GetString(decrypted));
+            }
+            else
+            {
+                byte[] pem = Encoding.UTF8.GetBytes(rsa.ExportPkcs8PrivateKeyPem());
+                File.WriteAllBytes(keyPath, ProtectedData.Protect(pem, null, DataProtectionScope.LocalMachine));
+            }
+
+            return new RsaSecurityKey(rsa);
+        }
+
+        /// <summary>
         /// Registers OpenIddict server and validation services in the DI container.
         /// Reads <c>IdentityServer:ServerUri</c>, <c>IdentityServer:Hosts</c>, and
         /// <c>IdentityServer:Groups</c> from <see cref="Program.Configuration"/>.
@@ -84,8 +122,15 @@ namespace IdentityServer
         {
             services.AddOpenIddict().AddServer(options =>
             {
-                // Ephemeral keys: suitable for IIS-hosted scenarios where the app pool is long-lived
-                options.AddEphemeralEncryptionKey().AddEphemeralSigningKey();
+                // When PersistKeys is true, keys survive app pool recycles (preventing JWKS cache
+                // mismatches) and are protected at rest with Windows DPAPI. When false (default),
+                // ephemeral keys are generated on every startup.
+                if (Program.Configuration.GetValue<bool>("IdentityServer:PersistKeys"))
+                    options.AddSigningKey(LoadOrCreateRsaKey("signing-key.bin"))
+                           .AddEncryptionKey(LoadOrCreateRsaKey("encryption-key.bin"));
+                else
+                    options.AddSigningKey(new RsaSecurityKey(RSA.Create(2048)))
+                           .AddEncryptionKey(new RsaSecurityKey(RSA.Create(2048)));
                 options.AllowAuthorizationCodeFlow();
                 options.AllowHybridFlow();
                 options.AllowImplicitFlow();
