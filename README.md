@@ -325,10 +325,12 @@ Either the `client_id` is not in `IdentityServer:Clients`, or the `redirect_uri`
 **Expected role claims are missing.**
 Verify the user is on a domain-joined machine (local accounts do not get role claims) and that the group names match the regex patterns in `IdentityServer:Groups`. Remember the patterns are regex — plain strings like `"MyServer Admins"` will match, but a pattern like `"MyServer *"` does **not** mean glob-style wildcard; it means the literal letter `r` zero or more times. Use `"MyServer .*"` for "starts with 'MyServer '".
 
-**Logs show a domain user authenticated via NTLM instead of Kerberos.**
-This usually means the server's SPN is not registered in Active Directory. Without a matching SPN, the browser cannot obtain a Kerberos ticket and falls back to NTLM. Register the SPN with `setspn -S HTTP/yourserver.domain.com DOMAIN\AppPoolAccount` and restart the application pool. NTLM is expected and normal for local machine accounts — the concern is only when a domain account shows up as NTLM in the logs.
+**How do I tell if a user is authenticating via NTLM or Kerberos?**
+Check the Windows Security event log (Event ID 4624) on the server: the Authentication Package field will show `Kerberos` or `NTLM`.
 
-**Windows authentication succeeds sometimes but fails intermittently with Kerberos.**
+If you suspect NTLM fallback, the most common cause is a missing or incorrect SPN. Without a matching SPN, the browser cannot obtain a Kerberos ticket and falls back to NTLM. Register the SPN with `setspn -S HTTP/yourserver.domain.com DOMAIN\AppPoolAccount` and restart the application pool. NTLM is expected and normal for local machine accounts — the concern is only when a domain account authenticates via NTLM when Kerberos is expected.
+
+**Windows authentication succeeds sometimes but fails intermittently.**
 The most common cause is clock skew — Kerberos requires the server and domain controller clocks to be within 5 minutes of each other. Check `w32tm /query /status` on the server and compare against the DC. VMs are especially prone to clock drift after snapshots or resume from suspend.
 
 ## License
