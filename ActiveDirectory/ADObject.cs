@@ -1,27 +1,103 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
 using System.Linq;
-using System.Runtime.Versioning;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
-namespace IdentityServer.ActiveDirectory
+namespace ActiveDirectory
 {
-    [SupportedOSPlatform("windows")]
+    /// <summary>
+    /// Base class for all Active Directory object wrappers (ADUser, ADGroup, ADComputer, ADPrinter).
+    /// Wraps a <see cref="DirectoryEntry"/> and provides common property accessors,
+    /// safe property retrieval, and LDAP query helpers.
+    /// Implements <see cref="IDisposable"/> to ensure the underlying <see cref="DirectoryEntry"/>
+    /// is released promptly.
+    /// </summary>
     public class ADObject : IDisposable
     {
-        public const string LDAP_MATCHING_RULE_BIT_AND = "1.2.840.113556.1.4.803"; // A match is found only if all bits from the attribute match the value. This rule is equivalent to a bitwise AND operator. 
-        public const string LDAP_MATCHING_RULE_BIT_OR = "1.2.840.113556.1.4.804"; // A match is found if any bits from the attribute match the value. This rule is equivalent to a bitwise OR operator. 
-        public const string LDAP_MATCHING_RULE_IN_CHAIN = "1.2.840.113556.1.4.1941"; // This rule is limited to filters that apply to the DN. This is a special "extended match operator that walks the chain of ancestry in objects all the way to the root until it finds a match. 
+        private static ILogger? _log;
+        private static ILogger Log => _log ??=
+            (IdentityServer.Program.LoggerFactory ?? NullLoggerFactory.Instance)
+            .CreateLogger<ADObject>();
 
-        protected DirectoryEntry adobject;
+        /// <summary>The underlying Active Directory object. Null until bound (either by constructor or lazy-bind).</summary>
+        protected DirectoryEntry? adobject = null;
+
+        // When populated from a DirectorySearcher result, the pre-fetched properties are copied
+        // into a plain dictionary so they are independent of the COM-backed SearchResultCollection
+        // lifecycle. The LDAP path is stored so the entry can be bound on demand for writes or
+        // direct-entry access, but property reads never bind when the cache is populated.
+        private Dictionary<string, List<object?>>? _cache;
+        private string? _ldapPath;
+
         private bool disposedValue;
 
+        /// <summary>Parameterless constructor for use by subclasses that set <see cref="adobject"/> themselves.</summary>
         public ADObject() { }
 
         /// <summary>
-        /// Class constructor. Accepts a user's logon name or distinguished name and gets the associated user account in active directory.
+        /// Sets the underlying <see cref="DirectoryEntry"/> after construction.
+        /// Used when a caller has an already-opened entry to wrap directly.
         /// </summary>
-        /// <param name="userName"></param>
+        internal void SetEntry(DirectoryEntry entry) => adobject = entry;
+
+        /// <summary>
+        /// Populates this object from a <see cref="SearchResult"/> returned by
+        /// <see cref="DirectorySearch"/>. All pre-fetched properties are copied into a plain
+        /// dictionary so they remain accessible after the <see cref="SearchResultCollection"/>
+        /// is disposed. Property reads are served entirely from this cache — no AD bind is
+        /// triggered. Writes or access to properties outside the cache still bind lazily.
+        /// </summary>
+        internal void SetFromResult(SearchResult result)
+        {
+            _ldapPath = result.Path;
+            _cache = new Dictionary<string, List<object?>>(StringComparer.OrdinalIgnoreCase);
+            foreach (string propName in result.Properties.PropertyNames)
+            {
+                var values = new List<object?>(result.Properties[propName].Count);
+                foreach (var val in result.Properties[propName])
+                    values.Add(val);
+                _cache[propName] = values;
+            }
+        }
+
+        /// <summary>
+        /// Returns the underlying <see cref="DirectoryEntry"/>, binding to AD on first call
+        /// if this object was populated from a search result.
+        /// Prefers a GUID-based LDAP path when <c>objectguid</c> was pre-fetched, so the
+        /// bind succeeds even if the object has been moved to a different OU since the search.
+        /// Falls back to the DN-based path from the original search result if the GUID is unavailable.
+        /// </summary>
+        protected DirectoryEntry EnsureEntry()
+        {
+            if (adobject == null)
+            {
+                if (_ldapPath == null)
+                    throw new InvalidOperationException("No Active Directory object is bound.");
+
+                // Prefer GUID-based binding — survives OU moves between search and lazy bind.
+                string path = _ldapPath;
+                if (_cache != null
+                    && _cache.TryGetValue(ADProperties.ObjectGuid, out var guidVals)
+                    && guidVals.Count > 0
+                    && guidVals[0] is byte[] bytes)
+                {
+                    path = "LDAP://<GUID=" + new ADGuid(bytes).ToString() + ">";
+                }
+
+                adobject = new DirectoryEntry(path);
+            }
+            return adobject;
+        }
+
+        /// <summary>
+        /// Constructs an <see cref="ADObject"/> from a full LDAP path or a distinguished name.
+        /// If the string already starts with <c>LDAP://</c> it is used as-is; otherwise
+        /// <c>LDAP://</c> is prepended.
+        /// </summary>
+        /// <param name="ldap">A full LDAP path (e.g. <c>LDAP://CN=...,DC=...</c>) or a bare DN.</param>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="ldap"/> is null or empty.</exception>
         public ADObject(String ldap)
         {
             if (ldap == null || ldap == "")
@@ -37,88 +113,153 @@ namespace IdentityServer.ActiveDirectory
             }
         }
 
+        /// <summary>
+        /// Constructs an <see cref="ADObject"/> wrapping an existing <see cref="DirectoryEntry"/>.
+        /// </summary>
+        /// <param name="adobject">An already-opened <see cref="DirectoryEntry"/>.</param>
         public ADObject(DirectoryEntry adobject)
         {
             this.adobject = adobject;
         }
 
+        /// <summary>
+        /// Constructs an <see cref="ADObject"/> by GUID, using the <c>LDAP://&lt;GUID=...&gt;</c> syntax
+        /// to locate the object regardless of its current OU placement.
+        /// </summary>
+        /// <param name="guid">The object's AD GUID.</param>
         public ADObject(ADGuid guid)
         {
             adobject = new DirectoryEntry("LDAP://<GUID=" + guid.ToString() + ">");
         }
 
-        public String SchemaClassName()
+        /// <summary>
+        /// Gets the AD schema class of this object, derived from <see cref="System.DirectoryServices.DirectoryEntry.SchemaClassName"/>.
+        /// Returns <see cref="ObjectClass.Unknown"/> for unrecognised classes.
+        /// </summary>
+        public ObjectClass SchemaClass
         {
-            return adobject.SchemaClassName;
+            get
+            {
+                return EnsureEntry().SchemaClassName switch
+                {
+                    "user"       => ObjectClass.User,
+                    "group"      => ObjectClass.Group,
+                    "computer"   => ObjectClass.Computer,
+                    "printQueue" => ObjectClass.Printer,
+                    _            => ObjectClass.Unknown
+                };
+            }
         }
 
-        public bool IsUser()
-        {
-            return adobject.SchemaClassName.Equals("user");
-        }
-
-        public bool IsGroup()
-        {
-            return adobject.SchemaClassName.Equals("group");
-        }
-
+        /// <summary>Gets the underlying <see cref="DirectoryEntry"/> for direct access when needed.</summary>
         public DirectoryEntry Get
         {
-            get { return adobject; }
+            get { return EnsureEntry(); }
         }
 
+        /// <summary>
+        /// Gets the object's AD GUID.
+        /// When populated from a search result that included <c>objectguid</c> in
+        /// <see cref="DirectorySearch.PropertiesToLoad"/>, the GUID is read from the cache
+        /// without triggering an AD round-trip.
+        /// </summary>
         public ADGuid ADGuid
         {
             get
             {
-                return new ADGuid(adobject.NativeGuid);
+                if (_cache != null)
+                {
+                    if (_cache.TryGetValue(ADProperties.ObjectGuid, out var vals)
+                        && vals.Count > 0 && vals[0] is byte[] bytes)
+                        return new ADGuid(bytes);
+                    return new ADGuid(); // objectguid is always loaded by DirectorySearch.CreateSearcher
+                }
+                return new ADGuid(EnsureEntry().NativeGuid);
+            }
+        }
+
+        /// <summary>Gets the object's common name (the <c>cn</c> attribute).</summary>
+        public String Name
+        {
+            get { return GetProperty(ADProperties.CommonName); }
+        }
+
+        /// <summary>Gets the object's fully qualified distinguished name (the <c>distinguishedName</c> attribute).</summary>
+        public String QualifiedName
+        {
+            get { return GetProperty(ADProperties.DistinguishedName); }
+        }
+
+        /// <summary>
+        /// Gets the object's LDAP name as returned by <see cref="DirectoryEntry.Name"/>
+        /// (e.g. <c>CN=John Smith</c>). Always requires a live AD connection.
+        /// </summary>
+        public String LDAPName
+        {
+            get { return EnsureEntry().Name; }
+        }
+
+        /// <summary>
+        /// Gets the UTC time at which this object was created.
+        /// <para>
+        /// Note: <c>whenCreated</c> is not replicated between domain controllers,
+        /// so the value depends on which DC is queried.
+        /// </para>
+        /// </summary>
+        public DateTime WhenCreated
+        {
+            get { return (DateTime)EnsureEntry().Properties[ADProperties.WhenCreated].Value!; }
+        }
+
+        /// <summary>
+        /// Gets the UTC time at which this object was last modified, or <c>null</c> if not set.
+        /// <para>
+        /// Note: <c>whenChanged</c> is not replicated between domain controllers,
+        /// so the value depends on which DC is queried.
+        /// </para>
+        /// </summary>
+        public DateTime? WhenChanged
+        {
+            get { return (DateTime?)EnsureEntry().Properties[ADProperties.WhenChanged].Value; }
+        }
+
+        /// <summary>
+        /// Gets the list of distinguished names of all groups this object is a direct member of
+        /// (the <c>memberOf</c> attribute, returned as full LDAP strings).
+        /// </summary>
+        public List<String> Groups
+        {
+            get { return GetList(ADProperties.MemberOf); }
+        }
+
+        /// <summary>
+        /// Same as <see cref="Groups"/>, but returns only the common name (CN) portion of each
+        /// group's distinguished name rather than the full LDAP string.
+        /// </summary>
+        public List<String> GroupsCommonName
+        {
+            get
+            {
+                List<String> result = new List<String>();
+
+                foreach (String group in Groups)
+                {
+                    foreach (String el in group.Split(','))
+                    {
+                        if (el.StartsWith("CN="))
+                        {
+                            result.Add(el.Substring(3));
+                        }
+                    }
+                }
+
+                return result;
             }
         }
 
         /// <summary>
-        /// Gets the object's common name
-        /// </summary>
-        public String Name
-        {
-            get { return (String)adobject.Properties["cn"].Value; }
-        }
-
-        /// <summary>
-        /// Gets the object's fully qualified distinguished name
-        /// </summary>
-        public String QualifiedName
-        {
-            get { return (String)adobject.Properties["distinguishedName"].Value; }
-        }
-
-        /// <summary>
-        /// Gets the object's LDAP name
-        /// </summary>
-        public String LDAPName
-        {
-            get { return adobject.Name; }
-        }
-
-        /// <summary>
-        /// Gets the object's creation time
-        /// (Not replicated; creation time depends on the queried DC)
-        /// </summary>
-        public DateTime WhenCreated
-        {
-            get { return (DateTime)adobject.Properties["whenCreated"].Value; }
-        }
-
-        /// <summary>
-        /// Gets the object's last update time
-        /// (Not replicated; update time can be null; depends on queried DC)
-        /// </summary>
-        public DateTime? WhenChanged
-        {
-            get { return (DateTime?)adobject.Properties["whenChanged"].Value; }
-        }
-
-        /// <summary>
-        /// Returns a List&lt;String&gt; of properties the user object contains
+        /// Returns a list of all AD attribute names present on this object.
+        /// Always requires a live AD connection to enumerate the full property set.
         /// </summary>
         public List<String> Attributes
         {
@@ -126,7 +267,7 @@ namespace IdentityServer.ActiveDirectory
             {
                 List<String> list = new List<String>();
 
-                foreach (string prop in adobject.Properties.PropertyNames)
+                foreach (string prop in EnsureEntry().Properties.PropertyNames)
                 {
                     list.Add(prop);
                 }
@@ -136,80 +277,306 @@ namespace IdentityServer.ActiveDirectory
         }
 
         /// <summary>
-        /// Accessor method to retrieve an arbitrary property by name
+        /// Safely retrieves a string-valued AD attribute by name.
+        /// Checks the search-result cache first; falls back to a live AD bind if the
+        /// property was not pre-fetched.
+        /// Returns an empty string if the attribute is absent, null, or not a string.
         /// </summary>
-        /// <param name="name">Property name</param>
-        /// <returns>The answer or an empty string if no such property exists or property is not a string</returns>
+        /// <param name="propertyName">The LDAP attribute name (e.g. <c>"givenName"</c>).</param>
+        /// <returns>The attribute value, or an empty string if the attribute is not present.</returns>
         public String GetProperty(String propertyName)
         {
             try
             {
-                return (string)adobject.Properties[propertyName].Value;
+                if (_cache != null)
+                {
+                    if (_cache.TryGetValue(propertyName, out var vals) && vals.Count > 0)
+                        return vals[0] as string ?? "";
+                    return "";
+                }
+                return EnsureEntry().Properties[propertyName].Value as string ?? "";
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Log.LogWarning(ex, "Failed to read AD property '{PropertyName}' from {ObjectPath}",
+                    propertyName, _ldapPath ?? adobject?.Path ?? "(unbound)");
                 return "";
             }
         }
 
-        public List<String> GetList(String property)
+        /// <summary>
+        /// Sets a string-valued AD attribute by name.
+        /// Passing an empty string clears the attribute (sets it to <c>null</c> in AD).
+        /// Call <see cref="Save"/> afterwards to commit the change.
+        /// </summary>
+        /// <param name="propertyName">The LDAP attribute name (e.g. <c>"givenName"</c>).</param>
+        /// <param name="value">The value to write, or an empty string to clear the attribute.</param>
+        public void SetProperty(String propertyName, String value)
         {
-            if (adobject.Properties[property].Value == null) { return new List<String>(); }
-            else
-            {
-                if (adobject.Properties[property].Value is Array)
-                {
-                    return ((Array)adobject.Properties[property].Value).OfType<String>().ToList();
-                }
-                else
-                {
-                    List<String> s = new List<String>();
-                    s.Add((String)adobject.Properties[property].Value);
-                    return s;
-                }
-            }
-        }
-
-        public Nullable<Int32> GetInt32(String property)
-        {
-            if (adobject.Properties[property].Value == null)
-            {
-                return null;
-            }
-            else
-            {
-                return (Int32)adobject.Properties[property].Value;
-            }
-        }
-
-        public void Close()
-        {
-            adobject.Close();
-        }
-
-        public void Save()
-        {
-            adobject.CommitChanges();
+            EnsureEntry().Properties[propertyName].Value = value.Length > 0 ? value : null;
         }
 
         /// <summary>
-        /// Cleans a string to be suitable for use in LDAP queries
+        /// Retrieves a multi-valued string attribute as a <see cref="List{String}"/>.
+        /// Checks the search-result cache first; falls back to a live AD bind if the
+        /// property was not pre-fetched.
+        /// If the attribute holds a single value it is wrapped in a list.
+        /// Returns an empty list if the attribute is absent or null.
         /// </summary>
-        /// <param name="value">an unclean string</param>
-        /// <returns>a cleans string</returns>
-        protected String CleanLDAPString(String value)
+        /// <param name="property">The LDAP attribute name.</param>
+        /// <returns>A list of all string values for the attribute.</returns>
+        public List<String> GetList(String property)
         {
-            value.Trim();
-            value.Trim(new char[] { (char)0 });
-            value.Replace("*", "\\2a");
-            value.Replace("(", "\\28");
-            value.Replace(")", "\\29");
-            value.Replace("\\", "\\5c");
-            value.Replace("/", "\\2f");
-            value.Replace("" + (char)0, "\\00");
-            return value;
+            if (_cache != null)
+            {
+                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0)
+                    return new List<string>();
+                var result = new List<string>(vals.Count);
+                foreach (var v in vals)
+                    if (v is string s) result.Add(s);
+                return result;
+            }
+
+            object? val = EnsureEntry().Properties[property].Value;
+            if (val == null) return new List<String>();
+            if (val is Array arr) return arr.OfType<String>().ToList();
+            return new List<String> { (String)val! };
         }
 
+        /// <summary>
+        /// Retrieves an integer-valued AD attribute.
+        /// Checks the search-result cache first; falls back to a live AD bind if the
+        /// property was not pre-fetched.
+        /// Returns <c>null</c> if the attribute is absent.
+        /// </summary>
+        /// <param name="property">The LDAP attribute name.</param>
+        /// <returns>The integer value, or <c>null</c> if the attribute is not present.</returns>
+        public Nullable<Int32> GetInt32(String property)
+        {
+            if (_cache != null)
+            {
+                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0) return null;
+                return vals[0] is int i ? i : null;
+            }
+
+            object? val = EnsureEntry().Properties[property].Value;
+            if (val == null) return null;
+            return (Int32)val;
+        }
+
+        /// <summary>
+        /// Retrieves a boolean-valued AD attribute.
+        /// Checks the search-result cache first; falls back to a live AD bind if the
+        /// property was not pre-fetched.
+        /// Returns <paramref name="defaultValue"/> if the attribute is absent or null.
+        /// </summary>
+        /// <param name="property">The LDAP attribute name.</param>
+        /// <param name="defaultValue">Value to return when the attribute is not present. Defaults to <c>false</c>.</param>
+        /// <returns>The boolean value, or <paramref name="defaultValue"/> if the attribute is not present.</returns>
+        public bool GetBool(String property, bool defaultValue = false)
+        {
+            if (_cache != null)
+            {
+                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0) return defaultValue;
+                return vals[0] is bool b ? b : defaultValue;
+            }
+
+            object? val = EnsureEntry().Properties[property].Value;
+            return val is bool bVal ? bVal : defaultValue;
+        }
+
+        /// <summary>
+        /// Retrieves a 64-bit integer AD attribute.
+        /// Checks the search-result cache first; falls back to a live AD bind if the
+        /// property was not pre-fetched.
+        /// Handles both plain <c>Int64</c> values and the <c>IADsLargeInteger</c> COM object
+        /// that ADSI returns for large-integer attributes such as <c>pwdLastSet</c>.
+        /// Returns <c>null</c> if the attribute is absent.
+        /// </summary>
+        /// <param name="property">The LDAP attribute name.</param>
+        public long? GetInt64(string property)
+        {
+            object? val;
+            if (_cache != null)
+            {
+                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0) return null;
+                val = vals[0];
+                if (val == null) return null;
+                if (val is long l) return l;
+                if (val is int  i) return i;
+                return null; // DirectorySearcher always returns Int64 for large-integer attributes
+            }
+
+            val = EnsureEntry().Properties[property].Value;
+            if (val == null) return null;
+            if (val is long lv) return lv;
+            if (val is int  iv) return iv;
+            // IADsLargeInteger COM object — access HighPart/LowPart via reflection
+            // to avoid a compile-time dependency on the ActiveDs type library.
+            try
+            {
+                var t = val.GetType();
+                int hi = (int)t.InvokeMember("HighPart", System.Reflection.BindingFlags.GetProperty, null, val, null)!;
+                int lo = (int)t.InvokeMember("LowPart",  System.Reflection.BindingFlags.GetProperty, null, val, null)!;
+                return ((long)hi << 32) | (uint)lo;
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning(ex, "Failed to read IADsLargeInteger value for property '{Property}' (type: {ValueType})",
+                    property, val.GetType().FullName);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Retrieves a Windows FILETIME attribute as a UTC <see cref="DateTime"/>.
+        /// Returns <c>null</c> if the attribute is absent, zero (not set),
+        /// or <see cref="long.MaxValue"/> (the AD sentinel for "never").
+        /// </summary>
+        /// <param name="property">The LDAP attribute name (e.g. <c>"pwdLastSet"</c>).</param>
+        public DateTime? GetDateTime(string property)
+        {
+            long? ft = GetInt64(property);
+            if (ft == null || ft == 0 || ft == long.MaxValue) return null;
+            try { return DateTime.FromFileTimeUtc(ft.Value); }
+            catch (Exception ex)
+            {
+                Log.LogWarning(ex, "Failed to convert FILETIME value {FileTime} to DateTime for property '{Property}'",
+                    ft.Value, property);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Returns <c>true</c> if the specified <see cref="UACFlags"/> bit is set in the
+        /// object's <c>userAccountControl</c> attribute.
+        /// </summary>
+        /// <param name="uacflag">The flag bit to test.</param>
+        /// <returns><c>true</c> if the flag is set; <c>false</c> otherwise.</returns>
+        public bool UACValue(UACFlags uacflag)
+        {
+            return ((GetInt32(ADProperties.UserAccountControl) ?? 0) & (int)uacflag) != 0;
+        }
+
+        /// <summary>Gets whether this account is disabled (<see cref="UACFlags.ACCOUNTDISABLE"/>).</summary>
+        public bool IsDisabled          => UACValue(UACFlags.ACCOUNTDISABLE);
+
+        /// <summary>Gets whether this account is currently locked out (<see cref="UACFlags.LOCKOUT"/>).</summary>
+        public bool IsLockedOut         => UACValue(UACFlags.LOCKOUT);
+
+        /// <summary>Gets whether this account's password is set never to expire (<see cref="UACFlags.DONT_EXPIRE_PASSWORD"/>).</summary>
+        public bool PasswordNeverExpires => UACValue(UACFlags.DONT_EXPIRE_PASSWORD);
+
+        /// <summary>Gets whether a smart card is required to log on interactively (<see cref="UACFlags.SMARTCARD_REQUIRED"/>).</summary>
+        public bool SmartCardRequired   => UACValue(UACFlags.SMARTCARD_REQUIRED);
+
+        /// <summary>Gets whether this is a user object (SchemaClass == User) without triggering a full AD bind.</summary>
+        public bool IsUser()  => SchemaClass == ObjectClass.User;
+
+        /// <summary>Gets whether this is a group object (SchemaClass == Group) without triggering a full AD bind.</summary>
+        public bool IsGroup() => SchemaClass == ObjectClass.Group;
+
+        /// <summary>
+        /// Flags corresponding to the <c>userAccountControl</c> attribute bits.
+        /// Pass individual values to <see cref="UACValue"/> to test whether a flag is set.
+        /// </summary>
+        public enum UACFlags
+        {
+            /// <summary>A logon script is assigned to this account.</summary>
+            SCRIPT = 0x0001,
+            /// <summary>The account is disabled and cannot be used to log on.</summary>
+            ACCOUNTDISABLE = 0x0002,
+            /// <summary>A home directory is required for this account.</summary>
+            HOMEDIR_REQUIRED = 0x0008,
+            /// <summary>The account is currently locked out.</summary>
+            LOCKOUT = 0x0010,
+            /// <summary>No password is required to log on with this account.</summary>
+            PASSWD_NOTREQD = 0x0020,
+            /// <summary>The user cannot change their own password.</summary>
+            PASSWD_CANT_CHANGE = 0x0040,
+            /// <summary>The account can use reversible password encryption.</summary>
+            ENCRYPTED_TEXT_PWD_ALLOWED = 0x0080,
+            /// <summary>A duplicate account in the same domain for users whose primary account is in another domain.</summary>
+            TEMP_DUPLICATE_ACCOUNT = 0x0100,
+            /// <summary>A normal user account (the most common account type).</summary>
+            NORMAL_ACCOUNT = 0x0200,
+            /// <summary>A trust account for a domain that trusts other domains.</summary>
+            INTERDOMAIN_TRUST_ACCOUNT = 0x0800,
+            /// <summary>A computer account for a workstation or server joined to the domain.</summary>
+            WORKSTATION_TRUST_ACCOUNT = 0x1000,
+            /// <summary>A computer account for a domain controller.</summary>
+            SERVER_TRUST_ACCOUNT = 0x2000,
+            /// <summary>The password on this account will never expire.</summary>
+            DONT_EXPIRE_PASSWORD = 0x10000,
+            /// <summary>An MNS (Majority Node Set) logon account used in cluster environments.</summary>
+            MNS_LOGON_ACCOUNT = 0x20000,
+            /// <summary>A smart card is required to log on interactively.</summary>
+            SMARTCARD_REQUIRED = 0x40000,
+            /// <summary>The account is trusted for Kerberos delegation (unconstrained).</summary>
+            TRUSTED_FOR_DELEGATION = 0x80000,
+            /// <summary>The account cannot be delegated to another account.</summary>
+            NOT_DELEGATED = 0x100000,
+            /// <summary>DES encryption is used for this account's Kerberos keys.</summary>
+            USE_DES_KEY_ONLY = 0x200000,
+            /// <summary>Kerberos pre-authentication is not required for this account.</summary>
+            DONT_REQ_PREAUTH = 0x400000,
+            /// <summary>The account's password has expired.</summary>
+            PASSWORD_EXPIRED = 0x800000,
+            /// <summary>The account is trusted to authenticate for other accounts (constrained delegation).</summary>
+            TRUSTED_TO_AUTH_FOR_DELEGATION = 0x1000000
+        }
+
+        /// <summary>
+        /// The AD schema class of an Active Directory object,
+        /// as reported by <see cref="ADObject.SchemaClass"/>.
+        /// </summary>
+        public enum ObjectClass
+        {
+            /// <summary>An unrecognised or unsupported schema class.</summary>
+            Unknown,
+            /// <summary>User account (<c>objectClass=user</c>).</summary>
+            User,
+            /// <summary>Security or distribution group (<c>objectClass=group</c>).</summary>
+            Group,
+            /// <summary>Computer account (<c>objectClass=computer</c>).</summary>
+            Computer,
+            /// <summary>Published printer (<c>objectClass=printQueue</c>).</summary>
+            Printer
+        }
+
+        /// <summary>
+        /// Closes the underlying <see cref="DirectoryEntry"/> connection and releases all resources.
+        /// Equivalent to calling <see cref="Dispose()"/>. Prefer a <c>using</c> block instead.
+        /// </summary>
+        public void Close()
+        {
+            Dispose();
+        }
+
+        /// <summary>
+        /// Commits any pending changes made to this object's properties back to Active Directory.
+        /// </summary>
+        public void Save()
+        {
+            EnsureEntry().CommitChanges();
+        }
+
+        /// <summary>
+        /// Moves this object to a different organisational unit or container.
+        /// The object retains its current name; only its parent changes.
+        /// </summary>
+        /// <param name="destinationOU">
+        /// The LDAP path of the target OU or container
+        /// (e.g. <c>LDAP://OU=Staff,DC=example,DC=com</c> or a bare DN).
+        /// </param>
+        public void Move(string destinationOU)
+        {
+            using var destination = new DirectoryEntry(
+                destinationOU.Contains("LDAP://") ? destinationOU : "LDAP://" + destinationOU);
+            EnsureEntry().MoveTo(destination);
+        }
+
+        /// <inheritdoc/>
         protected virtual void Dispose(bool disposing)
         {
             if (!disposedValue)
@@ -217,24 +584,31 @@ namespace IdentityServer.ActiveDirectory
                 if (disposing)
                 {
                     // dispose managed state (managed objects)
-                    adobject.Dispose();
                 }
 
                 // free unmanaged resources (unmanaged objects) and override finalizer
+                adobject?.Dispose();
 
                 // set large fields to null
                 adobject = null;
+                _cache = null;
+                _ldapPath = null;
 
                 disposedValue = true;
             }
         }
 
+        /// <summary>Finalizer — ensures unmanaged resources are released if <see cref="Dispose()"/> was not called.</summary>
         ~ADObject()
         {
             // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
             Dispose(disposing: false);
         }
 
+        /// <summary>
+        /// Releases all resources held by this object, including the underlying
+        /// <see cref="DirectoryEntry"/>. Use a <c>using</c> block to call this automatically.
+        /// </summary>
         public void Dispose()
         {
             // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
