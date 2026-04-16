@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
 using System.Linq;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ActiveDirectory
 {
@@ -16,11 +14,6 @@ namespace ActiveDirectory
     /// </summary>
     public class ADObject : IDisposable
     {
-        private static ILogger? _log;
-        private static ILogger Log => _log ??=
-            (IdentityServer.Program.LoggerFactory ?? NullLoggerFactory.Instance)
-            .CreateLogger<ADObject>();
-
         /// <summary>The underlying Active Directory object. Null until bound (either by constructor or lazy-bind).</summary>
         protected DirectoryEntry? adobject = null;
 
@@ -345,15 +338,9 @@ namespace ActiveDirectory
                 }
                 return EnsureEntry().Properties[propertyName].Value as string ?? "";
             }
-            catch (InvalidOperationException)
+            catch (Exception)
             {
                 throw;
-            }
-            catch (Exception ex)
-            {
-                Log.LogWarning(ex, "Failed to read AD property '{PropertyName}' from {ObjectPath}",
-                    propertyName, _ldapPath ?? adobject?.Path ?? "(unbound)");
-                return "";
             }
         }
 
@@ -502,9 +489,7 @@ namespace ActiveDirectory
             }
             catch (Exception ex)
             {
-                Log.LogWarning(ex, "Failed to read IADsLargeInteger value for property '{Property}' (type: {ValueType})",
-                    property, val.GetType().FullName);
-                return null;
+                throw new InvalidOperationException($"Failed to read IADsLargeInteger value for property '{property}' (type: {val.GetType().FullName})", ex);
             }
         }
 
@@ -521,9 +506,7 @@ namespace ActiveDirectory
             try { return DateTime.FromFileTimeUtc(ft.Value); }
             catch (Exception ex)
             {
-                Log.LogWarning(ex, "Failed to convert FILETIME value {FileTime} to DateTime for property '{Property}'",
-                    ft.Value, property);
-                return null;
+                throw new InvalidOperationException($"Failed to convert FILETIME value {ft.Value} to DateTime for property '{property}'", ex);
             }
         }
 

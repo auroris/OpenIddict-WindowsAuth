@@ -1,23 +1,16 @@
 using System;
 using System.DirectoryServices;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ActiveDirectory
 {
     /// <summary>
     /// Represents an Active Directory user account.
     /// Provides typed accessors for all standard user attributes (General, Address, Telephone,
-    /// Organization tabs), CF-specific extension attributes, and Active Directory account settings.
+    /// Organization tabs), and Active Directory account settings.
     /// Inherits GUID support, safe property access, and LDAP helpers from <see cref="ADObject"/>.
     /// </summary>
     public class ADUser : ADObject
     {
-        private static ILogger? _log;
-        private static ILogger Log => _log ??=
-            (IdentityServer.Program.LoggerFactory ?? NullLoggerFactory.Instance)
-            .CreateLogger<ADUser>();
-
         /// <summary>Parameterless constructor for use when <see cref="ADObject.adobject"/> is set separately.</summary>
         public ADUser() { }
 

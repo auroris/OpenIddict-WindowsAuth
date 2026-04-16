@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
 using System.Linq;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using static ActiveDirectory.ADObject;
 
 namespace ActiveDirectory
@@ -25,11 +23,6 @@ namespace ActiveDirectory
     /// </example>
     public class DirectorySearch
     {
-        private static ILogger? _log;
-        private static ILogger Log => _log ??=
-            (IdentityServer.Program.LoggerFactory ?? NullLoggerFactory.Instance)
-            .CreateLogger<DirectorySearch>();
-
         /// <summary>Controls how a filter value is matched against an attribute.</summary>
         public enum MatchType
         {
@@ -230,10 +223,8 @@ namespace ActiveDirectory
                     list.Add(obj);
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.LogError(ex, "AD search failed (filter: {Filter}, root: {Root})",
-                    BuildFilter(), _ldapRoot ?? "(domain default)");
                 throw;
             }
             finally
@@ -257,10 +248,8 @@ namespace ActiveDirectory
                 SearchResult? result = searcher.FindOne();
                 return result?.GetDirectoryEntry();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.LogError(ex, "AD FindOneEntry failed (filter: {Filter}, root: {Root})",
-                    BuildFilter(), _ldapRoot ?? "(domain default)");
                 throw;
             }
             finally
@@ -286,10 +275,8 @@ namespace ActiveDirectory
                 obj.SetFromResult(result);
                 return obj;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.LogError(ex, "AD FindOne failed (filter: {Filter}, root: {Root})",
-                    BuildFilter(), _ldapRoot ?? "(domain default)");
                 throw;
             }
             finally
