@@ -25,6 +25,14 @@ namespace ActiveDirectory
         /// <summary>The object's unique identifier byte array (<c>objectGUID</c>).</summary>
         public const string ObjectGuid = "objectguid";
 
+        /// <summary>
+        /// The object's schema class hierarchy (<c>objectClass</c>).
+        /// Multi-valued; contains all classes from <c>top</c> down to the most derived class
+        /// (e.g. <c>["top", "person", "organizationalPerson", "user"]</c> for a user account).
+        /// Used by <see cref="DirectorySearch"/> to instantiate the most specific wrapper type.
+        /// </summary>
+        public const string ObjectClass = "objectClass";
+
         /// <summary>The object's fully-qualified LDAP distinguished name (<c>distinguishedName</c>).</summary>
         public const string DistinguishedName = "distinguishedName";
 
@@ -135,47 +143,6 @@ namespace ActiveDirectory
 
             /// <summary>The user's company (<c>company</c>).</summary>
             public const string Company = "company";
-
-            // CF-specific extension attributes
-
-            /// <summary>
-            /// The user's rank in English — aliases the standard <c>title</c> attribute.
-            /// Same value as <see cref="Title"/>.
-            /// </summary>
-            public const string RankEn = "title";
-
-            /// <summary>The user's rank in French (<c>extensionAttribute2</c>).</summary>
-            public const string RankFr = "extensionattribute2";
-
-            /// <summary>Organisational level 1 in English (<c>extensionAttribute1</c>).</summary>
-            public const string Level1En = "extensionattribute1";
-
-            /// <summary>Organisational level 1 in French (<c>extensionAttribute7</c>).</summary>
-            public const string Level1Fr = "extensionattribute7";
-
-            /// <summary>Organisational level 2 (division) in English — standard <c>division</c> attribute.</summary>
-            public const string Level2En = "division";
-
-            /// <summary>Organisational level 2 (division) in French (<c>extensionAttribute3</c>).</summary>
-            public const string Level2Fr = "extensionattribute3";
-
-            /// <summary>Organisational level 3 (section) in English — standard <c>section</c> attribute.</summary>
-            public const string Level3En = "section";
-
-            /// <summary>Organisational level 3 (section) in French (<c>extensionAttribute8</c>).</summary>
-            public const string Level3Fr = "extensionattribute8";
-
-            /// <summary>Position title in English (<c>extensionAttribute4</c>).</summary>
-            public const string PositionEn = "extensionattribute4";
-
-            /// <summary>Position title in French (<c>extensionAttribute6</c>).</summary>
-            public const string PositionFr = "extensionattribute6";
-
-            /// <summary>Geographic area or base location (<c>extensionAttribute5</c>).</summary>
-            public const string GeographicArea = "extensionattribute5";
-
-            /// <summary>Primary service number — the unique CF member identifier (<c>extensionAttribute10</c>).</summary>
-            public const string SN_PRI = "extensionattribute10";
 
             // Additional attributes
 

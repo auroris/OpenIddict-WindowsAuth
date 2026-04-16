@@ -46,8 +46,7 @@ namespace ActiveDirectory
         /// Populates this object from a <see cref="SearchResult"/> returned by
         /// <see cref="DirectorySearch"/>. All pre-fetched properties are copied into a plain
         /// dictionary so they remain accessible after the <see cref="SearchResultCollection"/>
-        /// is disposed. Property reads are served entirely from this cache — no AD bind is
-        /// triggered. Writes or access to properties outside the cache still bind lazily.
+        /// is disposed. Property reads are served entirely from this cache.
         /// </summary>
         internal void SetFromResult(SearchResult result)
         {
@@ -63,11 +62,10 @@ namespace ActiveDirectory
         }
 
         /// <summary>
-        /// Returns the underlying <see cref="DirectoryEntry"/>, binding to AD on first call
-        /// if this object was populated from a search result.
-        /// Prefers a GUID-based LDAP path when <c>objectguid</c> was pre-fetched, so the
-        /// bind succeeds even if the object has been moved to a different OU since the search.
-        /// Falls back to the DN-based path from the original search result if the GUID is unavailable.
+        /// Returns the underlying <see cref="DirectoryEntry"/>.
+        /// Throws <see cref="InvalidOperationException"/> if the object is not yet bound —
+        /// either because it has not been populated at all, or because it was populated from a
+        /// <see cref="DirectorySearch"/> result and <see cref="Bind"/> has not been called yet.
         /// </summary>
         protected DirectoryEntry EnsureEntry()
         {
@@ -76,19 +74,65 @@ namespace ActiveDirectory
                 if (_ldapPath == null)
                     throw new InvalidOperationException("No Active Directory object is bound.");
 
-                // Prefer GUID-based binding — survives OU moves between search and lazy bind.
-                string path = _ldapPath;
-                if (_cache != null
-                    && _cache.TryGetValue(ADProperties.ObjectGuid, out var guidVals)
-                    && guidVals.Count > 0
-                    && guidVals[0] is byte[] bytes)
-                {
-                    path = "LDAP://<GUID=" + new ADGuid(bytes).ToString() + ">";
-                }
-
-                adobject = new DirectoryEntry(path);
+                // Object came from a DirectorySearcher result (_ldapPath is set by SetFromResult).
+                // Automatic binding has been removed to prevent unexpected COM exhaustion.
+                // Call Bind() explicitly before accessing properties that require a live connection.
+                throw new InvalidOperationException(
+                    "This object was populated from a DirectorySearcher result and is not bound to a " +
+                    "live Active Directory connection. Call Bind() explicitly before accessing this property.");
             }
             return adobject;
+        }
+
+        /// <summary>
+        /// Opens a live connection to Active Directory for this object.
+        /// <para>
+        /// Must be called explicitly when this object was populated from a <see cref="DirectorySearch"/>
+        /// result and you need to access properties that were not pre-fetched, or properties that
+        /// always require a live connection (e.g. <see cref="LDAPName"/>,
+        /// <see cref="WhenCreated"/>, <see cref="WhenChanged"/>).
+        /// Prefer adding required attributes to <see cref="DirectorySearch.PropertiesToLoad"/> over
+        /// calling Bind().
+        /// </para>
+        /// <para>If the object is already bound, this is a no-op.</para>
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Thrown if no LDAP path is available to bind against.</exception>
+        public void Bind()
+        {
+            if (adobject != null) return;
+            if (_ldapPath == null)
+                throw new InvalidOperationException("No Active Directory object is bound.");
+
+            // Prefer GUID-based binding — survives OU moves between search and bind.
+            string path = _ldapPath;
+            if (_cache != null
+                && _cache.TryGetValue(ADProperties.ObjectGuid, out var guidVals)
+                && guidVals.Count > 0
+                && guidVals[0] is byte[] bytes)
+            {
+                path = "LDAP://<GUID=" + new ADGuid(bytes).ToString() + ">";
+            }
+
+            adobject = new DirectoryEntry(path);
+
+            // Drop the search-result cache so all subsequent property reads go to the live
+            // DirectoryEntry rather than returning stale values from the search snapshot.
+            _cache = null;
+        }
+
+        /// <summary>
+        /// Discards ADSI's internal property cache and re-fetches all attributes from Active
+        /// Directory on the next property access.
+        /// <para>
+        /// After <see cref="Bind"/> is called, <see cref="DirectoryEntry"/> builds its own
+        /// ADSI-level cache as properties are read. If the underlying AD object changes after
+        /// binding, those changes will not be visible until <see cref="Refresh"/> is called.
+        /// </para>
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Thrown if the object is not yet bound.</exception>
+        public void Refresh()
+        {
+            EnsureEntry().RefreshCache();
         }
 
         /// <summary>
@@ -278,8 +322,9 @@ namespace ActiveDirectory
 
         /// <summary>
         /// Safely retrieves a string-valued AD attribute by name.
-        /// Checks the search-result cache first; falls back to a live AD bind if the
-        /// property was not pre-fetched.
+        /// When populated from a search result, reads from the pre-fetched cache.
+        /// If the property was not included in <see cref="DirectorySearch.PropertiesToLoad"/>
+        /// and <see cref="Bind"/> has not been called, throws <see cref="InvalidOperationException"/>.
         /// Returns an empty string if the attribute is absent, null, or not a string.
         /// </summary>
         /// <param name="propertyName">The LDAP attribute name (e.g. <c>"givenName"</c>).</param>
@@ -292,9 +337,17 @@ namespace ActiveDirectory
                 {
                     if (_cache.TryGetValue(propertyName, out var vals) && vals.Count > 0)
                         return vals[0] as string ?? "";
-                    return "";
+                    if (adobject == null)
+                        throw new InvalidOperationException(
+                            $"Property '{propertyName}' was not included in the search results. " +
+                            "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
+                    // Bind() has been called — fall through to live entry read.
                 }
                 return EnsureEntry().Properties[propertyName].Value as string ?? "";
+            }
+            catch (InvalidOperationException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -318,8 +371,9 @@ namespace ActiveDirectory
 
         /// <summary>
         /// Retrieves a multi-valued string attribute as a <see cref="List{String}"/>.
-        /// Checks the search-result cache first; falls back to a live AD bind if the
-        /// property was not pre-fetched.
+        /// When populated from a search result, reads from the pre-fetched cache.
+        /// If the property was not included in <see cref="DirectorySearch.PropertiesToLoad"/>
+        /// and <see cref="Bind"/> has not been called, throws <see cref="InvalidOperationException"/>.
         /// If the attribute holds a single value it is wrapped in a list.
         /// Returns an empty list if the attribute is absent or null.
         /// </summary>
@@ -329,12 +383,18 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0)
-                    return new List<string>();
-                var result = new List<string>(vals.Count);
-                foreach (var v in vals)
-                    if (v is string s) result.Add(s);
-                return result;
+                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
+                {
+                    var result = new List<string>(vals.Count);
+                    foreach (var v in vals)
+                        if (v is string s) result.Add(s);
+                    return result;
+                }
+                if (adobject == null)
+                    throw new InvalidOperationException(
+                        $"Property '{property}' was not included in the search results. " +
+                        "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
+                // Bind() has been called — fall through to live entry read.
             }
 
             object? val = EnsureEntry().Properties[property].Value;
@@ -345,8 +405,9 @@ namespace ActiveDirectory
 
         /// <summary>
         /// Retrieves an integer-valued AD attribute.
-        /// Checks the search-result cache first; falls back to a live AD bind if the
-        /// property was not pre-fetched.
+        /// When populated from a search result, reads from the pre-fetched cache.
+        /// If the property was not included in <see cref="DirectorySearch.PropertiesToLoad"/>
+        /// and <see cref="Bind"/> has not been called, throws <see cref="InvalidOperationException"/>.
         /// Returns <c>null</c> if the attribute is absent.
         /// </summary>
         /// <param name="property">The LDAP attribute name.</param>
@@ -355,8 +416,13 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0) return null;
-                return vals[0] is int i ? i : null;
+                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
+                    return vals[0] is int i ? i : null;
+                if (adobject == null)
+                    throw new InvalidOperationException(
+                        $"Property '{property}' was not included in the search results. " +
+                        "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
+                // Bind() has been called — fall through to live entry read.
             }
 
             object? val = EnsureEntry().Properties[property].Value;
@@ -366,8 +432,9 @@ namespace ActiveDirectory
 
         /// <summary>
         /// Retrieves a boolean-valued AD attribute.
-        /// Checks the search-result cache first; falls back to a live AD bind if the
-        /// property was not pre-fetched.
+        /// When populated from a search result, reads from the pre-fetched cache.
+        /// If the property was not included in <see cref="DirectorySearch.PropertiesToLoad"/>
+        /// and <see cref="Bind"/> has not been called, throws <see cref="InvalidOperationException"/>.
         /// Returns <paramref name="defaultValue"/> if the attribute is absent or null.
         /// </summary>
         /// <param name="property">The LDAP attribute name.</param>
@@ -377,8 +444,13 @@ namespace ActiveDirectory
         {
             if (_cache != null)
             {
-                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0) return defaultValue;
-                return vals[0] is bool b ? b : defaultValue;
+                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
+                    return vals[0] is bool b ? b : defaultValue;
+                if (adobject == null)
+                    throw new InvalidOperationException(
+                        $"Property '{property}' was not included in the search results. " +
+                        "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
+                // Bind() has been called — fall through to live entry read.
             }
 
             object? val = EnsureEntry().Properties[property].Value;
@@ -387,8 +459,9 @@ namespace ActiveDirectory
 
         /// <summary>
         /// Retrieves a 64-bit integer AD attribute.
-        /// Checks the search-result cache first; falls back to a live AD bind if the
-        /// property was not pre-fetched.
+        /// When populated from a search result, reads from the pre-fetched cache.
+        /// If the property was not included in <see cref="DirectorySearch.PropertiesToLoad"/>
+        /// and <see cref="Bind"/> has not been called, throws <see cref="InvalidOperationException"/>.
         /// Handles both plain <c>Int64</c> values and the <c>IADsLargeInteger</c> COM object
         /// that ADSI returns for large-integer attributes such as <c>pwdLastSet</c>.
         /// Returns <c>null</c> if the attribute is absent.
@@ -399,12 +472,19 @@ namespace ActiveDirectory
             object? val;
             if (_cache != null)
             {
-                if (!_cache.TryGetValue(property, out var vals) || vals.Count == 0) return null;
-                val = vals[0];
-                if (val == null) return null;
-                if (val is long l) return l;
-                if (val is int  i) return i;
-                return null; // DirectorySearcher always returns Int64 for large-integer attributes
+                if (_cache.TryGetValue(property, out var vals) && vals.Count > 0)
+                {
+                    val = vals[0];
+                    if (val == null) return null;
+                    if (val is long l) return l;
+                    if (val is int  i) return i;
+                    return null; // DirectorySearcher always returns Int64 for large-integer attributes
+                }
+                if (adobject == null)
+                    throw new InvalidOperationException(
+                        $"Property '{property}' was not included in the search results. " +
+                        "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
+                // Bind() has been called — fall through to live entry read.
             }
 
             val = EnsureEntry().Properties[property].Value;

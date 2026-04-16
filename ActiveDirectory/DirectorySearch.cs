@@ -49,7 +49,7 @@ namespace ActiveDirectory
 
         /// <summary>
         /// Attribute/value filter pairs to OR together in the search filter.
-        /// All entries are combined with a logical OR; the <see cref="coldlake.mil.ca.ActiveDirectory.ObjectClass"/> filter
+        /// All entries are combined with a logical OR; the <see cref="ActiveDirectory.ObjectClass"/> filter
         /// is always AND'd around the result.
         /// </summary>
         public SearchFilterCollection PropertiesToSearch { get; } = new();
@@ -136,9 +136,11 @@ namespace ActiveDirectory
             foreach (string prop in PropertiesToLoad)
                 searcher.PropertiesToLoad.Add(prop);
 
-            // Always include objectguid so EnsureEntry() can use stable GUID-based binding.
+            // Always include objectguid (stable GUID-based binding) and objectClass (type dispatch).
             if (!PropertiesToLoad.Contains(ADProperties.ObjectGuid))
                 searcher.PropertiesToLoad.Add(ADProperties.ObjectGuid);
+            if (!PropertiesToLoad.Contains(ADProperties.ObjectClass))
+                searcher.PropertiesToLoad.Add(ADProperties.ObjectClass);
 
             if (PageSize > 0)
                 searcher.PageSize = PageSize;
@@ -147,9 +149,64 @@ namespace ActiveDirectory
         }
 
         /// <summary>
-        /// Executes the search and returns matching objects as <typeparamref name="T"/>.
-        /// Each returned object wraps a live <see cref="System.DirectoryServices.DirectoryEntry"/>
-        /// and should be disposed when no longer needed.
+        /// Creates the most specific <see cref="ADObject"/> subtype for a search result by
+        /// inspecting the multi-valued <c>objectClass</c> attribute.
+        /// Throws <see cref="InvalidOperationException"/> if the detected type is not assignable
+        /// to <typeparamref name="T"/> — this indicates a bug in the search filter or a
+        /// misconfigured directory, and should not be silently swallowed.
+        /// </summary>
+        private static T CreateSpecificObject<T>(SearchResult result) where T : ADObject, new()
+        {
+            var classes = result.Properties[ADProperties.ObjectClass];
+            if (classes != null && classes.Count > 0)
+            {
+                bool hasComputer   = false;
+                bool hasPrintQueue = false;
+                bool hasUser       = false;
+                bool hasGroup      = false;
+
+                foreach (object? val in classes)
+                {
+                    if (val is string s)
+                        switch (s)
+                        {
+                            case "computer":   hasComputer   = true; break;
+                            case "printQueue": hasPrintQueue = true; break;
+                            case "user":       hasUser       = true; break;
+                            case "group":      hasGroup      = true; break;
+                        }
+                }
+
+                // computer must be checked before user — it inherits from user in the AD schema,
+                // so a computer result has both "user" and "computer" in its objectClass list.
+                ADObject specific =
+                    hasComputer   ? new ADComputer() :
+                    hasPrintQueue ? new ADPrinter()  :
+                    hasUser       ? new ADUser()      :
+                    hasGroup      ? new ADGroup()     :
+                                    new ADObject();
+
+                if (specific is T typed) return typed;
+
+                throw new InvalidOperationException(
+                    $"Search returned an object of type '{specific.GetType().Name}' " +
+                    $"but the search was declared for '{typeof(T).Name}'. " +
+                    $"AD path: {result.Path}");
+            }
+
+            // objectClass was absent — directory data is malformed.
+            throw new InvalidOperationException(
+                $"Search result has no objectClass attribute and cannot be typed. AD path: {result.Path}");
+        }
+
+        /// <summary>
+        /// Executes the search and returns matching objects, using the most specific available
+        /// wrapper type for each result (<see cref="ADUser"/>, <see cref="ADGroup"/>,
+        /// <see cref="ADComputer"/>, or <see cref="ADPrinter"/>).
+        /// When <typeparamref name="T"/> is <see cref="ADObject"/>, the returned list may contain
+        /// a mix of subtypes. When <typeparamref name="T"/> is a concrete subtype, a result whose
+        /// detected type is not assignable to <typeparamref name="T"/> throws
+        /// <see cref="InvalidOperationException"/>
         /// </summary>
         /// <param name="howMany">
         /// Maximum number of results to return. Pass <c>null</c> (the default) to return all matches.
@@ -168,7 +225,7 @@ namespace ActiveDirectory
                 using var results = searcher.FindAll();
                 foreach (SearchResult result in results)
                 {
-                    var obj = new T();
+                    var obj = CreateSpecificObject<T>(result);
                     obj.SetFromResult(result);
                     list.Add(obj);
                 }
@@ -213,9 +270,9 @@ namespace ActiveDirectory
         }
 
         /// <summary>
-        /// Executes the search and returns the first matching object as <typeparamref name="T"/>,
-        /// or <c>null</c> if no match is found.
-        /// The returned object should be disposed when no longer needed.
+        /// Executes the search and returns the first matching object using the most specific
+        /// available wrapper type, or <c>null</c> if no match is found.
+        /// See <see cref="Find{T}"/> for type-dispatch behaviour.
         /// </summary>
         public T? FindOne<T>() where T : ADObject, new()
         {
@@ -225,7 +282,7 @@ namespace ActiveDirectory
                 using var searcher = CreateSearcher(searchRoot);
                 SearchResult? result = searcher.FindOne();
                 if (result == null) return null;
-                var obj = new T();
+                var obj = CreateSpecificObject<T>(result);
                 obj.SetFromResult(result);
                 return obj;
             }

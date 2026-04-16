@@ -26,13 +26,17 @@ namespace ActiveDirectory
         /// or full LDAP path.
         /// </summary>
         /// <param name="userName">A SAM account name, <c>DOMAIN\username</c>, or <c>LDAP://...</c> path.</param>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="userName"/> is null or empty.</exception>
+        /// <exception cref="InvalidOperationException">Thrown if no matching user is found in Active Directory.</exception>
         public ADUser(String userName)
         {
-            if (userName == null || userName == "")
-                throw new ArgumentNullException();
+            if (String.IsNullOrEmpty(userName))
+                throw new ArgumentNullException(nameof(userName));
 
             if (userName.Contains("LDAP://"))
             {
+                if (!DirectoryEntry.Exists(userName))
+                    throw new InvalidOperationException($"No Active Directory user was found at path '{userName}'.");
                 base.adobject = new DirectoryEntry(userName);
             }
             else
@@ -50,7 +54,7 @@ namespace ActiveDirectory
                 search.PropertiesToLoad.Add(ADProperties.CommonName);
                 base.adobject = search.FindOneEntry();
                 if (base.adobject == null)
-                    Log.LogWarning("User '{UserName}' was not found in Active Directory", userName);
+                    throw new InvalidOperationException($"User '{userName}' was not found in Active Directory.");
             }
         }
 
