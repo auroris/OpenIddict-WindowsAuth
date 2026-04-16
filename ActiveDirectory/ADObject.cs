@@ -41,10 +41,13 @@ namespace ActiveDirectory
         /// dictionary so they remain accessible after the <see cref="SearchResultCollection"/>
         /// is disposed. Property reads are served entirely from this cache.
         /// </summary>
-        internal void SetFromResult(SearchResult result)
+        internal void SetFromResult(SearchResult result, IEnumerable<string>? requestedProperties = null)
         {
             _ldapPath = result.Path;
             _cache = new Dictionary<string, List<object?>>(StringComparer.OrdinalIgnoreCase);
+            if (requestedProperties != null)
+                foreach (string prop in requestedProperties)
+                    _cache[prop] = new List<object?>();
             foreach (string propName in result.Properties.PropertyNames)
             {
                 var values = new List<object?>(result.Properties[propName].Count);

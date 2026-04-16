@@ -219,7 +219,7 @@ namespace ActiveDirectory
                 foreach (SearchResult result in results)
                 {
                     var obj = CreateSpecificObject<T>(result);
-                    obj.SetFromResult(result);
+                    obj.SetFromResult(result, PropertiesToLoad);
                     list.Add(obj);
                 }
             }
@@ -264,7 +264,7 @@ namespace ActiveDirectory
                 SearchResult? result = searcher.FindOne();
                 if (result == null) return null;
                 var obj = CreateSpecificObject<T>(result);
-                obj.SetFromResult(result);
+                obj.SetFromResult(result, PropertiesToLoad);
                 return obj;
             }
             finally
