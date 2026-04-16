@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Serilog;
 using System;
 
 namespace IdentityServer
@@ -27,20 +28,37 @@ namespace IdentityServer
 
 		public static void Main(string[] args)
 		{
+			// Bootstrap logger used only until the host reads appsettings.json.
+			Log.Logger = new LoggerConfiguration()
+				.MinimumLevel.Warning()
+				.WriteTo.Console()
+				.CreateLogger();
+
 			try
 			{
 				CreateHostBuilder(args).Build().Run();
 			}
 			catch (Exception ex)
 			{
-				// Log to stderr in case the logging providers are not yet configured.
-				Console.Error.WriteLine($"[FATAL] Host terminated unexpectedly: {ex}");
+				Log.Fatal(ex, "Host terminated unexpectedly");
 				throw;
+			}
+			finally
+			{
+				Log.CloseAndFlush();
 			}
 		}
 
 		public static IHostBuilder CreateHostBuilder(string[] args) =>
 			Host.CreateDefaultBuilder(args)
+			.UseSerilog((context, loggerConfig) => loggerConfig
+				.ReadFrom.Configuration(context.Configuration)
+				.Enrich.FromLogContext()
+				.WriteTo.Console()
+				.WriteTo.File("logs/identityserver-.log",
+					rollingInterval: RollingInterval.Day,
+					retainedFileCountLimit: 14,
+					outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}"))
 			.ConfigureAppConfiguration((hostingContext, config) =>
 			{
 				config.Sources.Clear();
@@ -50,12 +68,6 @@ namespace IdentityServer
 				{
 					config.AddCommandLine(args);
 				}
-			})
-			.ConfigureLogging(logging =>
-			{
-				logging.ClearProviders();
-				logging.AddConsole();
-				logging.SetMinimumLevel(LogLevel.Debug);
 			})
 			.ConfigureWebHostDefaults(webBuilder =>
 			{

@@ -12,6 +12,7 @@ An OpenID Connect authorization server that uses Windows Integrated Authenticati
 - [Configuration](#configuration)
   - [Example appsettings.json](#example-appsettingsjson)
   - [Configuration keys](#configuration-keys)
+    - [Serilog:MinimumLevel](#serilogminimumlevel)
     - [IdentityServer:PersistKeys](#identityserverpersistkeys)
     - [IdentityServer:DataPath](#identityserverdatapath)
     - [IdentityServer:AccessTokenLifetime](#identityserveraccesstokenlifetime)
@@ -61,10 +62,13 @@ Configuration is read from `appsettings.json`. Environment variables and command
 
 ```json
 {
-  "Logging": {
-    "LogLevel": {
+  "Serilog": {
+    "MinimumLevel": {
       "Default": "Information",
-      "Microsoft": "Warning"
+      "Override": {
+        "Microsoft": "Warning",
+        "Microsoft.Hosting.Lifetime": "Information"
+      }
     }
   },
   "IdentityServer": {
@@ -93,6 +97,37 @@ Configuration is read from `appsettings.json`. Environment variables and command
 ```
 
 ### Configuration keys
+
+#### Serilog:MinimumLevel
+
+Controls the verbosity of application logging. Logs are written to the console and to daily rolling files under the `logs/` directory (e.g. `logs/identityserver-20260416.log`), with the last 14 days retained.
+
+The `Default` level applies to all log sources that are not explicitly overridden. The `Override` map lets you set a different level per namespace — useful for quieting noisy framework components without suppressing your own application logs.
+
+```json
+"Serilog": {
+  "MinimumLevel": {
+    "Default": "Information",
+    "Override": {
+      "Microsoft": "Warning",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  }
+}
+```
+
+Available levels, from most to least verbose:
+
+| Level | When to use |
+|---|---|
+| `Verbose` | Fine-grained tracing; very high volume — development only |
+| `Debug` | Diagnostic detail useful during development and troubleshooting |
+| `Information` | Normal operational events (startup, requests, configuration) — recommended default |
+| `Warning` | Unexpected conditions that the application handled but that warrant attention |
+| `Error` | Failures that prevented an operation from completing |
+| `Fatal` | Unrecoverable failures that force the application to shut down |
+
+Setting `Default` to `Warning` or higher is appropriate for production when log volume or storage is a concern. Setting it to `Debug` captures the detailed token, claim, and Active Directory diagnostics that are useful when troubleshooting authentication issues.
 
 #### IdentityServer:ServerUri
 
