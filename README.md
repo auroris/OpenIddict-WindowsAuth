@@ -1,42 +1,239 @@
 # OpenIddict-WindowsAuth
-An OpenID Connect authorization server for Windows Integrated Authentication using the OpenIddict library.
+
+An OpenID Connect authorization server that uses Windows Integrated Authentication as its identity source, built on the [OpenIddict](https://documentation.openiddict.com/) library.
+
+> **Note:** "IdentityServer" in this project refers to the assembly name and configuration section — it is **not** related to Duende IdentityServer.
+
+## Contents
+
+- [Rationale](#rationale)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+  - [Example appsettings.json](#example-appsettingsjson)
+  - [Configuration keys](#configuration-keys)
+- [Supported flows, scopes, and claims](#supported-flows-scopes-and-claims)
+- [Testing](#testing)
+  - [Testing with oidcdebugger.com](#testing-with-oidcdebuggercom)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ## Rationale
 
-Essentially a "copy and paste" OpenID Connect authorization server that doesn't need to maintain a database, certificates or any kind of permanent state. All it needs to do is perform Windows Authentication and pass the results to whomever called it.
+A drop-in OpenID Connect authorization server that requires no database, no certificate management, and no persistent state. It performs Windows Integrated Authentication against the local machine or Active Directory and returns the resulting identity as standard OIDC tokens.
+
+**Tradeoffs to be aware of:**
+
+- Signing and encryption keys are ephemeral — they are regenerated on every application start. Tokens issued before a restart or app pool recycle cannot be validated afterwards.
+- There is no refresh token flow: tokens have a fixed lifetime and clients must re-authenticate when they expire.
+- Suitable for intranet scenarios where a short-lived token model is acceptable and the user population is already authenticated to Windows.
+
+## Prerequisites
+
+- Windows Server or Windows 10/11 with IIS
+- .NET 10.0 runtime (ASP.NET Core Hosting Bundle)
+- IIS with both **Windows Authentication** and **Anonymous Authentication** roles/features installed
+- For Active Directory integration: the host machine must be domain-joined (local-only accounts are supported with reduced claims — see [Supported flows, scopes, and claims](#supported-flows-scopes-and-claims))
 
 ## Installation
 
-OpenIddict-WindowsAuth doesn't have a database, so whenever the application is unloaded or recycled any tokens issued will no longer be valid. You can configure the app pool to suspend rather than terminate during periods of inactivity and alter the pool's recycle settings to fire on a set schedule during periods of inactivity.
-
-You must enable both Windows Authentication and Anonymous Authentication in IIS.
+1. Publish the project (`dotnet publish -c Release`) and copy the output to your IIS server.
+2. Create an IIS site or application pointing at the publish folder. The application pool must run under an identity with permission to query Active Directory (typically `ApplicationPoolIdentity` works on domain-joined machines).
+3. In IIS Manager, open the site's **Authentication** feature and enable **both**:
+   - **Windows Authentication** (required — this is how users are authenticated)
+   - **Anonymous Authentication** (required — the `/connect/token` and `/.well-known/*` endpoints must be reachable without a Windows challenge)
+4. Because tokens do not survive application restarts, configure the app pool's recycle settings:
+   - Disable idle timeout or set **Idle Time-out Action** to `Suspend` (rather than `Terminate`)
+   - Move the daily recycle to a low-traffic hour, or disable it in favor of a fixed schedule
 
 ## Configuration
 
-Configuration for the application is primarily via appsettings.json, though environment variables and command line options are supported as well. The following configuration keys are of importance.
+Configuration is read from `appsettings.json`. Environment variables and command-line arguments are also supported through the standard ASP.NET Core configuration pipeline.
 
-### IdentityServer:ServerUri
+### Example appsettings.json
 
-The full URI IdentityServer should report in the Issuer and configuration fields of the `/.well-known/openid-configuration` document. If you install IdentityServer to "http(s)://myserver.com/IdentityServer/" that is what you should report in this field.
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning"
+    }
+  },
+  "IdentityServer": {
+    "ServerUri": "*",
+    "UseForwardedHeaders": false,
+    "Hosts": [
+      "http://localhost",
+      "https://localhost",
+      "https://myserver.com",
+      "https://oidcdebugger.com"
+    ],
+    "Clients": [
+      { "ClientId": "my-public-app" },
+      { "ClientId": "my-confidential-app", "ClientSecret": "changeme" }
+    ],
+    "Groups": [
+      "^MyServer .*$",
+      "^Domain Admins$"
+    ]
+  }
+}
+```
 
-### IdentityServer:Hosts
+### Configuration keys
 
-This key is a list of acceptable hosts attempting to authenticate against this application. We will not return authentication data for hosts not in this list. This list is also used to specify dotNet's cors setting. The expected format is a regular base URL without a trailing slash.
+#### IdentityServer:ServerUri
 
-### IdentityServer:Groups
+The full URI the server should report in the `issuer` and endpoint fields of `/.well-known/openid-configuration`. If the app is installed at `https://myserver.com/IdentityServer/`, that is what should go here.
 
-This key is a list of acceptable active directory groups. Items are exact match, case insensitive, but also allows wildcards. If the authenticating user is a member of an active directory group listed here, it will be returned as a role claim.
+Set to `"*"` (the default) to auto-detect the issuer from the incoming request URL. Convenient when the deployment address isn't known in advance, but the issuer will vary if the app is reached via multiple hostnames.
+
+#### IdentityServer:UseForwardedHeaders
+
+Set to `true` to enable ASP.NET Core's forwarded-headers middleware, which rewrites the request scheme and host from `X-Forwarded-Proto` and `X-Forwarded-Host`. Enable this when the app sits behind a reverse proxy (IIS ARR, nginx, etc.) so issuer auto-detection and redirect URIs reflect the public-facing address. Defaults to `false`.
+
+#### IdentityServer:Hosts
+
+An allowlist of hosts that may appear in a client's `redirect_uri`. Authorization requests whose `redirect_uri` resolves to a host not in this list are rejected. Only the host portion of each URL is compared — scheme, port, and path are ignored during validation.
+
+#### IdentityServer:Clients
+
+List of permitted clients. Each entry must have a `ClientId`. An optional `ClientSecret` can be provided for confidential clients — if present, it will be verified on token requests.
+
+- Use `"*"` as a `ClientId` to accept any client without enumerating them.
+- Use `"*"` as a `ClientSecret` value to accept any secret without validation (useful for dev/test).
+
+```json
+"Clients": [
+  { "ClientId": "my-public-app" },
+  { "ClientId": "my-confidential-app", "ClientSecret": "changeme" },
+  { "ClientId": "*" }
+]
+```
+
+If this key is absent or empty, any `client_id` is accepted (open access).
+
+#### IdentityServer:Groups
+
+A list of **.NET regular expressions** (case-insensitive) matched against the authenticating user's Active Directory group names. Matching groups are returned as `role` claims in the token.
+
+```json
+"Groups": [
+  "^MyServer .*$",
+  "^Domain Admins$",
+  ".*-Readers$"
+]
+```
+
+Only groups whose common name matches at least one pattern are emitted. This keeps tokens small and prevents leaking internal group membership to relying parties.
+
+## Supported flows, scopes, and claims
+
+**Supported OAuth 2.0 / OIDC flows:**
+
+| Flow | `response_type` values |
+|---|---|
+| Authorization Code | `code` |
+| Implicit | `id_token`, `token`, `id_token token` |
+| Hybrid | `code id_token`, `code token`, `code id_token token` |
+
+PKCE is supported for the Authorization Code flow and recommended for public clients.
+
+**Supported scopes and the claims each adds to the token:**
+
+| Scope | Claims |
+|---|---|
+| `openid` | `sub` (Windows SID), `name` |
+| `profile` | `windowsaccountname`; plus `givenname`, `surname`, `homephone` when available from Active Directory |
+| `email` | `email` (from AD `mail` attribute, falling back to `username@localhost`) |
+| `roles` | `role` (one per AD group matching `IdentityServer:Groups`) |
+
+Profile, email, and role claims that require Active Directory are only populated for domain users. For users logged on with a local machine account, only `sub`, `name`, `windowsaccountname`, and a synthetic `email` of `username@localhost` are returned.
+
+All claims are included in both the access token and the ID token.
 
 ## Testing
 
-If you run the project in Visual Studio, here are the testing Uris:
-
-Viewing the OpenId configuration document:
+If you run the project in Visual Studio, the OpenID configuration document is available at:
 
 * http://localhost:5000/.well-known/openid-configuration
-* https://localhost:44353/.well-known/openid-configuration
 
-Testing the authorization endpoint with oidcdebugger:
+### Testing with oidcdebugger.com
 
-* http://localhost:5000/connect/authorize?client_id=optional&redirect_uri=https://oidcdebugger.com/debug&scope=openid%20profile%20email%20roles&response_type=id_token&response_mode=form_post&nonce=f6pz1s2cfgs
-* https://localhost:44353/connect/authorize?client_id=optional&redirect_uri=https://oidcdebugger.com/debug&scope=openid%20profile%20email%20roles&response_type=id_token&response_mode=form_post&nonce=f6pz1s2cfgs
+[oidcdebugger.com](https://oidcdebugger.com/) is a browser-based tool for constructing and sending OpenID Connect authorization requests and inspecting the results. Fill in the form fields as described below, then click **Send Request**. Your browser will be redirected to the authorization endpoint, Windows authentication will occur transparently, and the debugger will display the tokens or authorization code returned.
+
+#### Common fields (all flows)
+
+| Field | Value |
+|---|---|
+| Authorize URI | `http://localhost:5000/connect/authorize` |
+| Redirect URI | `https://oidcdebugger.com/debug` |
+| Client ID | `my-public-app` |
+| Scope | `openid profile email roles` |
+| Nonce | *(leave as auto-generated)* |
+
+The `https://oidcdebugger.com` host is already in the default `IdentityServer:Hosts` allowlist, so no configuration change is needed.
+
+#### Implicit flow — returns an ID token directly
+
+| Field | Value |
+|---|---|
+| Response type | `id_token` |
+| Response mode | `form_post` |
+
+Use `token` instead of `id_token` to receive an access token, or check both to receive both in a single response.
+
+#### Authorization code flow — returns a code for server-side exchange
+
+| Field | Value |
+|---|---|
+| Response type | `code` |
+| Response mode | `query` or `form_post` |
+| Token URI | `http://localhost:5000/connect/token` *(required only if using PKCE; see below)* |
+
+The debugger will display the authorization `code`. For **public clients** (`my-public-app`), enable **Use PKCE?** (SHA-256 is recommended) — the debugger will auto-generate the code verifier and challenge and can perform the token exchange automatically when Token URI is provided. For **confidential clients** (`my-confidential-app`), the debugger cannot supply `client_secret`, so use a tool such as Postman or `curl` to exchange the code manually:
+
+```
+POST http://localhost:5000/connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code
+&code=<code from debugger>
+&redirect_uri=https://oidcdebugger.com/debug
+&client_id=my-confidential-app
+&client_secret=changeme
+```
+
+#### Hybrid flow — returns a code and tokens together
+
+| Field | Value |
+|---|---|
+| Response type | `code` + `id_token` (check both) |
+| Response mode | `form_post` |
+| Token URI | `http://localhost:5000/connect/token` |
+
+You can also combine `code` + `token` or all three (`code`, `token`, `id_token`) depending on what the client needs.
+
+![Successful authorization response in oidcdebugger.com](docs/images/oidcdebugger-success.png)
+
+## Troubleshooting
+
+**Browser prompts for Windows credentials repeatedly (401 loop).**
+Anonymous Authentication is likely disabled in IIS, or Windows Authentication is not enabled at all. Both must be turned on. Also confirm the browser trusts the site for integrated authentication (for IE/Edge/Chrome, the site must be in the Local Intranet zone or explicitly whitelisted).
+
+**Tokens issued before a restart fail validation afterwards.**
+Expected. Signing and encryption keys are ephemeral. Configure the IIS app pool to suspend rather than terminate on idle, and to recycle on a predictable schedule.
+
+**Issuer in tokens doesn't match the URL clients use.**
+Either set `IdentityServer:ServerUri` to the canonical public URL explicitly, or — if behind a reverse proxy — set `IdentityServer:UseForwardedHeaders` to `true` and ensure the proxy is sending `X-Forwarded-Proto` and `X-Forwarded-Host`.
+
+**Authorization request rejected with `invalid_client`.**
+Either the `client_id` is not in `IdentityServer:Clients`, or the `redirect_uri` host is not in `IdentityServer:Hosts`. The application log records which check failed and the offending value.
+
+**Expected role claims are missing.**
+Verify the user is on a domain-joined machine (local accounts do not get role claims) and that the group names match the regex patterns in `IdentityServer:Groups`. Remember the patterns are regex — plain strings like `"MyServer Admins"` will match, but a pattern like `"MyServer *"` does **not** mean glob-style wildcard; it means the literal letter `r` zero or more times. Use `"MyServer .*"` for "starts with 'MyServer '".
+
+## License
+
+[MIT](LICENSE)
