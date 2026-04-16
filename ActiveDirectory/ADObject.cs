@@ -137,8 +137,8 @@ namespace ActiveDirectory
         /// <exception cref="ArgumentNullException">Thrown if <paramref name="ldap"/> is null or empty.</exception>
         public ADObject(String ldap)
         {
-            if (ldap == null || ldap == "")
-                throw new ArgumentNullException();
+            if (string.IsNullOrEmpty(ldap))
+                throw new ArgumentNullException(nameof(ldap));
 
             if (ldap.Contains("LDAP://"))
             {
@@ -245,7 +245,14 @@ namespace ActiveDirectory
         /// </summary>
         public DateTime WhenCreated
         {
-            get { return (DateTime)EnsureEntry().Properties[ADProperties.WhenCreated].Value!; }
+            get
+            {
+                object? val = EnsureEntry().Properties[ADProperties.WhenCreated].Value;
+                if (val == null)
+                    throw new InvalidOperationException(
+                        $"Active Directory object has no '{ADProperties.WhenCreated}' attribute.");
+                return (DateTime)val;
+            }
         }
 
         /// <summary>
@@ -324,24 +331,17 @@ namespace ActiveDirectory
         /// <returns>The attribute value, or an empty string if the attribute is not present.</returns>
         public String GetProperty(String propertyName)
         {
-            try
+            if (_cache != null)
             {
-                if (_cache != null)
-                {
-                    if (_cache.TryGetValue(propertyName, out var vals) && vals.Count > 0)
-                        return vals[0] as string ?? "";
-                    if (adobject == null)
-                        throw new InvalidOperationException(
-                            $"Property '{propertyName}' was not included in the search results. " +
-                            "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
-                    // Bind() has been called — fall through to live entry read.
-                }
-                return EnsureEntry().Properties[propertyName].Value as string ?? "";
+                if (_cache.TryGetValue(propertyName, out var vals) && vals.Count > 0)
+                    return vals[0] as string ?? "";
+                if (adobject == null)
+                    throw new InvalidOperationException(
+                        $"Property '{propertyName}' was not included in the search results. " +
+                        "Add it to PropertiesToLoad, or call Bind() to open a live connection.");
+                // Bind() has been called — fall through to live entry read.
             }
-            catch (Exception)
-            {
-                throw;
-            }
+            return EnsureEntry().Properties[propertyName].Value as string ?? "";
         }
 
         /// <summary>
@@ -387,7 +387,12 @@ namespace ActiveDirectory
             object? val = EnsureEntry().Properties[property].Value;
             if (val == null) return new List<String>();
             if (val is Array arr) return arr.OfType<String>().ToList();
-            return new List<String> { (String)val! };
+            try { return new List<String> { (String)val }; }
+            catch (InvalidCastException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Property '{property}' has an unexpected type '{val.GetType().FullName}'; expected String.", ex);
+            }
         }
 
         /// <summary>
@@ -414,7 +419,12 @@ namespace ActiveDirectory
 
             object? val = EnsureEntry().Properties[property].Value;
             if (val == null) return null;
-            return (Int32)val;
+            try { return (Int32)val; }
+            catch (InvalidCastException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Property '{property}' has an unexpected type '{val.GetType().FullName}'; expected Int32.", ex);
+            }
         }
 
         /// <summary>
@@ -634,6 +644,8 @@ namespace ActiveDirectory
         /// </param>
         public void Move(string destinationOU)
         {
+            if (string.IsNullOrEmpty(destinationOU))
+                throw new ArgumentNullException(nameof(destinationOU));
             using var destination = new DirectoryEntry(
                 destinationOU.Contains("LDAP://") ? destinationOU : "LDAP://" + destinationOU);
             EnsureEntry().MoveTo(destination);

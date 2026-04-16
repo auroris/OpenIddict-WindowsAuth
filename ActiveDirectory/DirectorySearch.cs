@@ -223,10 +223,6 @@ namespace ActiveDirectory
                     list.Add(obj);
                 }
             }
-            catch (Exception)
-            {
-                throw;
-            }
             finally
             {
                 searchRoot?.Dispose();
@@ -247,10 +243,6 @@ namespace ActiveDirectory
                 using var searcher = CreateSearcher(searchRoot);
                 SearchResult? result = searcher.FindOne();
                 return result?.GetDirectoryEntry();
-            }
-            catch (Exception)
-            {
-                throw;
             }
             finally
             {
@@ -274,10 +266,6 @@ namespace ActiveDirectory
                 var obj = CreateSpecificObject<T>(result);
                 obj.SetFromResult(result);
                 return obj;
-            }
-            catch (Exception)
-            {
-                throw;
             }
             finally
             {
