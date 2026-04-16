@@ -26,7 +26,7 @@ namespace IdentityServer
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Supported flows: Authorization Code and Implicit.
+    /// Supported flows: Authorization Code, Implicit, and Hybrid.
     /// Supported scopes: <c>openid</c>, <c>email</c>, <c>profile</c>, <c>roles</c>.
     /// </para>
     /// <para>
@@ -87,6 +87,7 @@ namespace IdentityServer
                 // Ephemeral keys: suitable for IIS-hosted scenarios where the app pool is long-lived
                 options.AddEphemeralEncryptionKey().AddEphemeralSigningKey();
                 options.AllowAuthorizationCodeFlow();
+                options.AllowHybridFlow();
                 options.AllowImplicitFlow();
                 var serverUri = Program.Configuration.GetSection("IdentityServer:ServerUri").Get<string>();
                 if (!string.IsNullOrEmpty(serverUri) && serverUri != "*")
