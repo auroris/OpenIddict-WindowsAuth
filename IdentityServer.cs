@@ -134,6 +134,15 @@ namespace IdentityServer
                 options.AllowAuthorizationCodeFlow();
                 options.AllowHybridFlow();
                 options.AllowImplicitFlow();
+
+                var accessTokenLifetime = Program.Configuration.GetValue<TimeSpan?>("IdentityServer:AccessTokenLifetime");
+                if (accessTokenLifetime.HasValue) options.SetAccessTokenLifetime(accessTokenLifetime.Value);
+
+                var identityTokenLifetime = Program.Configuration.GetValue<TimeSpan?>("IdentityServer:IdentityTokenLifetime");
+                if (identityTokenLifetime.HasValue) options.SetIdentityTokenLifetime(identityTokenLifetime.Value);
+
+                var authCodeLifetime = Program.Configuration.GetValue<TimeSpan?>("IdentityServer:AuthorizationCodeLifetime");
+                if (authCodeLifetime.HasValue) options.SetAuthorizationCodeLifetime(authCodeLifetime.Value);
                 var serverUri = Program.Configuration.GetSection("IdentityServer:ServerUri").Get<string>();
                 if (!string.IsNullOrEmpty(serverUri) && serverUri != "*")
                     options.SetIssuer(new Uri(serverUri));

@@ -14,6 +14,9 @@ An OpenID Connect authorization server that uses Windows Integrated Authenticati
   - [Configuration keys](#configuration-keys)
     - [IdentityServer:PersistKeys](#identityserverpersistkeys)
     - [IdentityServer:DataPath](#identityserverdatapath)
+    - [IdentityServer:AccessTokenLifetime](#identityserveraccesstokenlifetime)
+    - [IdentityServer:IdentityTokenLifetime](#identityserveridentitytokenlifetime)
+    - [IdentityServer:AuthorizationCodeLifetime](#identityserverauthorizationcodelifetime)
 - [Supported flows, scopes, and claims](#supported-flows-scopes-and-claims)
 - [Testing](#testing)
   - [Testing with oidcdebugger.com](#testing-with-oidcdebuggercom)
@@ -68,6 +71,9 @@ Configuration is read from `appsettings.json`. Environment variables and command
     "ServerUri": "*",
     "UseForwardedHeaders": false,
     "PersistKeys": false,
+    "AccessTokenLifetime": "01:00:00",
+    "IdentityTokenLifetime": "01:00:00",
+    "AuthorizationCodeLifetime": "00:05:00",
     "Hosts": [
       "http://localhost",
       "https://localhost",
@@ -116,6 +122,24 @@ The IIS app pool identity needs **read and write** access to this path. You can 
 ```json
 "DataPath": "C:\\inetpub\\IdentityServerKeys"
 ```
+
+#### IdentityServer:AccessTokenLifetime
+
+How long an access token remains valid after it is issued. Specified as `"hh:mm:ss"`. Defaults to `"01:00:00"` (1 hour).
+
+Access tokens are bearer credentials sent with every API request. A shorter lifetime limits the window of exposure if a token is intercepted, at the cost of more frequent re-authentication. On an intranet with Windows Authentication, re-authentication is silent, so shorter lifetimes are low-friction.
+
+#### IdentityServer:IdentityTokenLifetime
+
+How long an ID token remains valid after it is issued. Specified as `"hh:mm:ss"`. Defaults to `"01:00:00"` (1 hour).
+
+The ID token is the OIDC-specific token that carries the user's identity claims to the client application (as opposed to the access token, which is presented to resource servers). In most flows both tokens are issued together and it makes sense to keep their lifetimes in sync.
+
+#### IdentityServer:AuthorizationCodeLifetime
+
+How long an authorization code remains valid for exchange at the token endpoint. Specified as `"hh:mm:ss"`. Defaults to `"00:05:00"` (5 minutes).
+
+Authorization codes are short-lived single-use values exchanged immediately for tokens. There is rarely a reason to lengthen this beyond a few minutes; increasing it primarily widens the window for a code-interception attack.
 
 #### IdentityServer:Hosts
 
